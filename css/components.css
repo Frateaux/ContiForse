@@ -1447,6 +1447,51 @@
 }
 
 /* ==========================================================================
+   CODA FOTO IN SOSPESO (RATE LIMIT PERSISTENCE)
+   ========================================================================== */
+.pending-scans-card {
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.pending-scan-item {
+  background: var(--bg-surface-elevated, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  border-radius: var(--radius-sm, 8px);
+  transition: all var(--transition-fast);
+}
+
+.pending-scan-item:hover {
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.pending-scan-thumb {
+  width: 68px;
+  height: 68px;
+  object-fit: cover;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.15));
+  cursor: pointer;
+  background-color: #000000;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.18s ease;
+}
+
+.pending-scan-thumb:hover {
+  transform: scale(1.08);
+}
+
+.pending-scan-info {
+  min-width: 170px;
+}
+
+.pending-scan-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ==========================================================================
    MEDIA PRINT PER STAMPA & PDF A4 PERFETTO
    ========================================================================== */
 @media print {

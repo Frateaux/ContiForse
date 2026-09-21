@@ -95,17 +95,8 @@ class App {
       syncBtn.textContent = '⏳ Sync...';
 
       try {
-        const envelope = store.getEncryptedEnvelope();
-        if (!envelope) throw new Error('Nessun dato cifrato presente da sincronizzare.');
-
-        // smartPushVault crea o individua automaticamente il Gist se non impostato
-        const res = await GitHubSyncManager.smartPushVault(token, gistId, envelope);
-
-        await store.updateSettings({
-          githubToken: token,
-          githubGistId: res.gistId,
-          lastCloudSyncDate: res.updatedAt
-        });
+        // Esegue la sincronizzazione bidirezionale intelligente (Pull + Merge + Push)
+        const res = await store.syncWithCloud(token, gistId);
 
         // Se l'utente è sulla schermata impostazioni, aggiorna i campi a video senza ricaricare la pagina
         if (domGistInput) domGistInput.value = res.gistId;
@@ -118,7 +109,16 @@ class App {
           `;
         }
 
-        Toast.success('Sincronizzazione Cloud completata con successo!');
+        if (res.stats && (res.stats.newSuppliers > 0 || res.stats.newSupplies > 0)) {
+          Toast.success(`Sincronizzazione completata! ${res.stats.newSuppliers} nuovi fornitori e ${res.stats.newSupplies} nuove forniture importati dal Cloud.`);
+        } else {
+          Toast.success('Dati allineati con il Cloud! Il database è aggiornato con tutti i tuoi dispositivi.');
+        }
+
+        // Ri-renderizza la vista attiva per mostrare subito i nuovi fornitori/dati a video
+        if (this.views[this.currentTab]) {
+          this.views[this.currentTab].render();
+        }
       } catch (err) {
         Toast.error(`Errore sincronizzazione: ${err.message}`);
       } finally {

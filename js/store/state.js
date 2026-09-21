@@ -9,6 +9,7 @@
  */
 
 import { CryptoVault } from '../crypto/vault.js';
+import { GitHubSyncManager } from '../sync/githubSync.js';
 
 const STORAGE_KEY = 'contifor_vault_encrypted';
 
@@ -242,6 +243,44 @@ export class AppStore {
     this.notify('VAULT_UNLOCKED');
     this.notify('CLOUD_SYNC_COMPLETED');
     return true;
+  }
+
+  /**
+   * Esegue la sincronizzazione intelligente bidirezionale con GitHub Cloud (2-Way Smart Sync).
+   * Scarica, fonde i fornitori/forniture e ricarica i dati senza mai sovrascrivere o perdere dati.
+   */
+  async syncWithCloud(token, gistId) {
+    if (!this.isUnlocked || !this.sessionPassword) {
+      throw new Error('Impossibile sincronizzare: Vault bloccato.');
+    }
+
+    const t = token || this.data.settings?.githubToken;
+    const g = gistId || this.data.settings?.githubGistId;
+
+    if (!t) {
+      throw new Error('Token GitHub non impostato.');
+    }
+
+    const syncRes = await GitHubSyncManager.smartSync(t, g, this.sessionPassword, this.data);
+
+    // Aggiorna dati in memoria
+    this.data = syncRes.mergedData;
+    if (!this.data.settings) this.data.settings = {};
+    this.data.settings.githubToken = t;
+    this.data.settings.githubGistId = syncRes.gistId;
+    this.data.settings.lastCloudSyncDate = syncRes.updatedAt;
+
+    // Persistenza locale cifrata
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(syncRes.envelope));
+
+    // Notifica modifiche
+    this.notify('SUPPLIERS_UPDATED');
+    this.notify('SUPPLIES_UPDATED');
+    this.notify('SETTINGS_UPDATED');
+    this.notify('DATA_SAVED');
+    this.notify('CLOUD_SYNC_COMPLETED', syncRes);
+
+    return syncRes;
   }
 
   // --- METODI GESTIONE FORNITORI E LISTINI ---

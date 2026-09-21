@@ -157,6 +157,84 @@ async function testBiometricsAndSync() {
   }
   console.log('✓ Rilevamento automatico Gist (smart discovery) verificato con successo!');
   globalThis.fetch = originalFetch;
+
+  // Test mergeVaultData (2-way merge smartphone ⇄ PC)
+  const localVault = {
+    suppliers: [
+      { id: 'sup_pc_1', name: 'Fornitore Locale PC', priceList: [{ id: 'p1', name: 'Prodotto A', unitPrice: 10 }] }
+    ],
+    supplies: [],
+    settings: { theme: 'dark' }
+  };
+  const remoteVault = {
+    suppliers: [
+      { id: 'sup_phone_1', name: 'Fornitore Prova Telefono', priceList: [{ id: 'p2', name: 'Prodotto B', unitPrice: 20 }] }
+    ],
+    supplies: [
+      { id: 'inv_1', supplierName: 'Fornitore Prova Telefono', totalAmount: 200 }
+    ],
+    settings: { geminiModel: 'gemini-3.8-flash' }
+  };
+
+  const { mergedData, stats } = GitHubSyncManager.mergeVaultData(localVault, remoteVault);
+  if (mergedData.suppliers.length !== 2) {
+    throw new Error(`Fusione fornitori non corretta: attesi 2 fornitori, trovati ${mergedData.suppliers.length}`);
+  }
+  if (!mergedData.suppliers.some(s => s.name === 'Fornitore Prova Telefono')) {
+    throw new Error('Fornitore del telefono non presente dopo la fusione!');
+  }
+  if (!mergedData.suppliers.some(s => s.name === 'Fornitore Locale PC')) {
+    throw new Error('Fornitore del PC cancellato dopo la fusione!');
+  }
+  if (mergedData.supplies.length !== 1) {
+    throw new Error('Forniture del telefono non integrate!');
+  }
+  console.log('✓ Fusione bidirezionale (2-Way Smart Merge) verificata: 0 dati sovrascritti, 100% integrati!');
+}
+
+import { PendingScansStorage } from '../js/storage/pendingScansStorage.js';
+
+async function testPendingScansStorage() {
+  console.log('\n--- TEST 5: Coda Scatti in Sospeso & Persistenza Rate Limit ---');
+  if (!globalThis.localStorage) {
+    const store = new Map();
+    globalThis.localStorage = {
+      getItem: (k) => store.get(k) || null,
+      setItem: (k, v) => store.set(k, String(v)),
+      removeItem: (k) => store.delete(k),
+      clear: () => store.clear()
+    };
+  }
+
+  await PendingScansStorage.clear();
+
+  const scan1 = {
+    imageBase64: 'dGVzdF9pbWFnZV9kYXRhXzEyMw==',
+    mimeType: 'image/jpeg',
+    supplierId: 'sup_test_1',
+    customSupplierName: 'Fornitore Test Sospeso',
+    scanMode: 'quick',
+    errorMessage: 'Gemini ha troppe richieste al momento (Rate Limit 429)'
+  };
+
+  const saved = await PendingScansStorage.save(scan1);
+  if (!saved.id || !saved.createdAt) {
+    throw new Error('ID o data creazione mancanti nello scatto salvato.');
+  }
+
+  const all = await PendingScansStorage.getAll();
+  if (all.length !== 1 || all[0].customSupplierName !== 'Fornitore Test Sospeso') {
+    throw new Error('Recupero scatti in sospeso non corretto.');
+  }
+  console.log('✓ Salvataggio e recupero persistente foto in sospeso verificato con successo.');
+
+  // Verifica cancellazione
+  await PendingScansStorage.delete(saved.id);
+  const remaining = await PendingScansStorage.getAll();
+  if (remaining.length !== 0) {
+    throw new Error('Cancellazione scatto in sospeso non riuscita.');
+  }
+  console.log('✓ Rimozione foto completata/cancellata verificata con successo.');
 }
 
 async function runAll() {
@@ -165,6 +243,7 @@ async function runAll() {
     testGeminiSchema();
     testInvoiceAndMathAudit();
     await testBiometricsAndSync();
+    await testPendingScansStorage();
     console.log('\n=============================================');
     console.log('TUTTI I TEST AUTOMATIZZATI HANNO AVUTO ESITO POSITIVO!');
     console.log('=============================================');

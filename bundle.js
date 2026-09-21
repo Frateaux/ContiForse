@@ -470,6 +470,214 @@ class BiometricsManager {
 }
 
 
+// --- MODULE: js/storage/pendingScansStorage.js ---
+/**
+ * ContiFor - Gestione Scatti e Foto in Sospeso (Pending Scans Storage)
+ * 
+ * Conserva le foto acquisite quando Gemini Vision è congestionato (Rate Limit 429)
+ * o quando l'utente naviga tra schede o chiude l'app.
+ * Utilizza IndexedDB con fallback localStorage per garantire persistenza illimitata senza quote ridotte.
+ */
+
+const DB_NAME = 'contifor_db';
+const DB_VERSION = 1;
+const STORE_NAME = 'pending_scans';
+const LS_FALLBACK_KEY = 'contifor_pending_scans_fallback';
+
+class PendingScansStorage {
+  static dbPromise = null;
+
+  static getDB() {
+    if (this.dbPromise) return this.dbPromise;
+
+    this.dbPromise = new Promise((resolve) => {
+      if (typeof indexedDB === 'undefined') {
+        resolve(null);
+        return;
+      }
+
+      try {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+        request.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+          }
+        };
+
+        request.onsuccess = (e) => {
+          resolve(e.target.result);
+        };
+
+        request.onerror = (e) => {
+          console.warn('IndexedDB non accessibile, fallback su localStorage:', e);
+          resolve(null);
+        };
+      } catch (err) {
+        console.warn('Errore apertura IndexedDB:', err);
+        resolve(null);
+      }
+    });
+
+    return this.dbPromise;
+  }
+
+  static async getAll() {
+    try {
+      const db = await this.getDB();
+      if (db) {
+        return new Promise((resolve) => {
+          const tx = db.transaction(STORE_NAME, 'readonly');
+          const store = tx.objectStore(STORE_NAME);
+          const req = store.getAll();
+          req.onsuccess = () => {
+            const list = req.result || [];
+            list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            resolve(list);
+          };
+          req.onerror = () => resolve(this._getFallback());
+        });
+      }
+    } catch (e) {
+      console.warn('Errore lettura IndexedDB:', e);
+    }
+    return this._getFallback();
+  }
+
+  static async getById(id) {
+    if (!id) return null;
+    try {
+      const db = await this.getDB();
+      if (db) {
+        return new Promise((resolve) => {
+          const tx = db.transaction(STORE_NAME, 'readonly');
+          const store = tx.objectStore(STORE_NAME);
+          const req = store.get(id);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(this._getByIdFallback(id));
+        });
+      }
+    } catch (e) {
+      console.warn('Errore recupero da IndexedDB:', e);
+    }
+    return this._getByIdFallback(id);
+  }
+
+  static async save(scanData) {
+    if (!scanData.id) {
+      scanData.id = 'scan_pending_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    }
+    if (!scanData.createdAt) {
+      scanData.createdAt = new Date().toISOString();
+    }
+    scanData.updatedAt = new Date().toISOString();
+
+    try {
+      const db = await this.getDB();
+      if (db) {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          const store = tx.objectStore(STORE_NAME);
+          const req = store.put(scanData);
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        });
+        return scanData;
+      }
+    } catch (e) {
+      console.warn('Errore salvataggio IndexedDB:', e);
+    }
+
+    this._saveFallback(scanData);
+    return scanData;
+  }
+
+  static async delete(id) {
+    if (!id) return;
+    try {
+      const db = await this.getDB();
+      if (db) {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          const store = tx.objectStore(STORE_NAME);
+          const req = store.delete(id);
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        });
+      }
+    } catch (e) {
+      console.warn('Errore cancellazione IndexedDB:', e);
+    }
+    this._deleteFallback(id);
+  }
+
+  static async count() {
+    const list = await this.getAll();
+    return list.length;
+  }
+
+  static async clear() {
+    try {
+      const db = await this.getDB();
+      if (db) {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          const store = tx.objectStore(STORE_NAME);
+          const req = store.clear();
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        });
+      }
+    } catch (e) {
+      console.warn('Errore pulizia IndexedDB:', e);
+    }
+    try {
+      localStorage.removeItem(LS_FALLBACK_KEY);
+    } catch (e) {}
+  }
+
+  // --- METODI DI FALLBACK LOCALSTORAGE ---
+  static _getFallback() {
+    try {
+      const raw = localStorage.getItem(LS_FALLBACK_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  static _getByIdFallback(id) {
+    const list = this._getFallback();
+    return list.find(s => s.id === id) || null;
+  }
+
+  static _saveFallback(scanData) {
+    try {
+      const list = this._getFallback();
+      const idx = list.findIndex(s => s.id === scanData.id);
+      if (idx !== -1) {
+        list[idx] = scanData;
+      } else {
+        list.unshift(scanData);
+      }
+      localStorage.setItem(LS_FALLBACK_KEY, JSON.stringify(list));
+    } catch (e) {
+      console.warn('Memoria fallback esaurita:', e);
+    }
+  }
+
+  static _deleteFallback(id) {
+    try {
+      const list = this._getFallback().filter(s => s.id !== id);
+      localStorage.setItem(LS_FALLBACK_KEY, JSON.stringify(list));
+    } catch (e) {}
+  }
+}
+
+
 // --- MODULE: js/sync/githubSync.js ---
 /**
  * ContiFor - GitHub Zero-Knowledge Cloud Sync (Modulo Sincronizzazione Smartphone ⇄ Desktop)
@@ -477,6 +685,8 @@ class BiometricsManager {
  * Sincronizza il Vault cifrato AES-256 su un GitHub Gist privato tramite le API ufficiali di GitHub.
  * NESSUN dato in chiaro viene mai inviato in rete.
  */
+
+
 
 class GitHubSyncManager {
   static API_BASE = 'https://api.github.com';
@@ -726,6 +936,179 @@ class GitHubSyncManager {
       gistId: targetGistId,
       envelope: res.envelope,
       updatedAt: res.updatedAt
+    };
+  }
+
+  /**
+   * Fusione bidirezionale intelligente di due Vault (Locale e Remoto Cloud).
+   * Unisce fornitori, listini prezzi e storico fatture senza mai sovrascrivere o perdere dati.
+   */
+  static mergeVaultData(local, remote) {
+    if (!remote) return { mergedData: local, stats: { newSuppliers: 0, newSupplies: 0 } };
+    if (!local) return { mergedData: remote, stats: { newSuppliers: remote.suppliers?.length || 0, newSupplies: remote.supplies?.length || 0 } };
+
+    let newSuppliersCount = 0;
+    let newSuppliesCount = 0;
+
+    // 1. FORNITORI (Suppliers)
+    const supplierList = [...(local.suppliers || [])];
+
+    (remote.suppliers || []).forEach(remoteSup => {
+      if (!remoteSup) return;
+      const remoteNameNorm = (remoteSup.name || '').trim().toLowerCase();
+      const remoteId = (remoteSup.id || '').trim();
+
+      // Cerca se esiste già in locale per ID o per nome identico
+      const existingIdx = supplierList.findIndex(s => {
+        if (remoteId && s.id === remoteId) return true;
+        if (remoteNameNorm && (s.name || '').trim().toLowerCase() === remoteNameNorm) return true;
+        return false;
+      });
+
+      if (existingIdx === -1) {
+        // Nuovo fornitore arrivato dal remoto!
+        supplierList.push({ ...remoteSup });
+        newSuppliersCount++;
+      } else {
+        // Esiste in entrambi: tieni il più recente e unisci i listini prodotti
+        const localSup = supplierList[existingIdx];
+        const localTime = new Date(localSup.updatedAt || localSup.createdAt || 0).getTime();
+        const remoteTime = new Date(remoteSup.updatedAt || remoteSup.createdAt || 0).getTime();
+
+        const base = remoteTime > localTime ? { ...remoteSup } : { ...localSup };
+
+        // Unione listino prodotti senza duplicati
+        const productList = [...(base.priceList || [])];
+        (remoteSup.priceList || []).forEach(rp => {
+          const rProdName = (rp.name || '').trim().toLowerCase();
+          const pIdx = productList.findIndex(lp => (lp.name || '').trim().toLowerCase() === rProdName);
+          if (pIdx === -1) {
+            productList.push(rp);
+          } else if (remoteTime > localTime) {
+            productList[pIdx] = rp;
+          }
+        });
+
+        base.priceList = productList;
+        supplierList[existingIdx] = base;
+      }
+    });
+
+    // 2. STORICO FORNITURE E FATTURE (Supplies)
+    const supplyList = [...(local.supplies || [])];
+    (remote.supplies || []).forEach(remoteSp => {
+      if (!remoteSp) return;
+      const rId = (remoteSp.id || '').trim();
+      const rInvNum = (remoteSp.invoiceNumber || '').trim();
+
+      const existingIdx = supplyList.findIndex(ls => {
+        if (rId && ls.id === rId) return true;
+        if (rInvNum && ls.invoiceNumber === rInvNum) return true;
+        return false;
+      });
+
+      if (existingIdx === -1) {
+        supplyList.push({ ...remoteSp });
+        newSuppliesCount++;
+      } else {
+        const localSp = supplyList[existingIdx];
+        const localTime = new Date(localSp.updatedAt || localSp.date || 0).getTime();
+        const remoteTime = new Date(remoteSp.updatedAt || remoteSp.date || 0).getTime();
+        if (remoteTime > localTime) {
+          supplyList[existingIdx] = { ...remoteSp };
+        }
+      }
+    });
+
+    // 3. SETTINGS
+    const mergedSettings = {
+      ...(local.settings || {}),
+      githubToken: local.settings?.githubToken || remote.settings?.githubToken || '',
+      githubGistId: local.settings?.githubGistId || remote.settings?.githubGistId || '',
+      geminiApiKey: local.settings?.geminiApiKey || remote.settings?.geminiApiKey || '',
+      geminiModel: local.settings?.geminiModel || remote.settings?.geminiModel || 'gemini-3.8-flash',
+      lastCloudSyncDate: new Date().toISOString()
+    };
+
+    return {
+      mergedData: {
+        suppliers: supplierList,
+        supplies: supplyList,
+        settings: mergedSettings
+      },
+      stats: {
+        newSuppliers: newSuppliersCount,
+        newSupplies: newSuppliesCount,
+        totalSuppliers: supplierList.length,
+        totalSupplies: supplyList.length
+      }
+    };
+  }
+
+  /**
+   * Sincronizzazione Intelligente Bidirezionale (2-Way Smart Sync).
+   * Scarica i dati dal Cloud, li fonde con i dati locali (senza sovrascritture distruttive)
+   * e ripubblica il risultato consolidato su GitHub Gist.
+   */
+  static async smartSync(token, gistId, sessionPassword, localData) {
+    if (!token || token.trim() === '') throw new Error('Token GitHub mancante.');
+    if (!sessionPassword) throw new Error('Master Password di sessione non disponibile.');
+
+    let targetGistId = (gistId || '').trim();
+    if (!targetGistId) {
+      targetGistId = await this.findExistingContiForGist(token);
+    }
+
+    if (targetGistId) {
+      let pullResult = null;
+      try {
+        pullResult = await this.pullVault(token, targetGistId);
+      } catch (err) {
+        console.warn('Lettura Gist esistente non riuscita, procedo con creazione:', err);
+      }
+
+      if (pullResult && pullResult.envelope) {
+        let remoteData;
+        try {
+          remoteData = await CryptoVault.decryptData(pullResult.envelope, sessionPassword);
+        } catch (decryptErr) {
+          throw new Error('Impossibile decifrare il Vault su GitHub: la Master Password di questo dispositivo è diversa da quella usata sullo smartphone.');
+        }
+
+        // Fusione bidirezionale
+        const { mergedData, stats } = this.mergeVaultData(localData, remoteData);
+
+        // Cifra i dati consolidati
+        const mergedEnvelope = await CryptoVault.encryptData(mergedData, sessionPassword);
+
+        // Pubblica su GitHub Gist
+        const pushRes = await this.pushVault(token, targetGistId, mergedEnvelope);
+
+        return {
+          gistId: targetGistId,
+          mergedData,
+          envelope: mergedEnvelope,
+          stats,
+          updatedAt: pushRes.updatedAt
+        };
+      }
+    }
+
+    // Se nessun Gist esisteva ancora su GitHub, crealo con i dati locali
+    const initialEnvelope = await CryptoVault.encryptData(localData, sessionPassword);
+    const createRes = await this.createPrivateGist(token, initialEnvelope);
+
+    return {
+      gistId: createRes.gistId,
+      mergedData: localData,
+      envelope: initialEnvelope,
+      stats: {
+        newSuppliers: 0,
+        newSupplies: 0,
+        totalSuppliers: localData.suppliers?.length || 0,
+        totalSupplies: localData.supplies?.length || 0
+      },
+      updatedAt: createRes.updatedAt
     };
   }
 }
@@ -1404,6 +1787,7 @@ class InvoiceGenerator {
 
 
 
+
 const STORAGE_KEY = 'contifor_vault_encrypted';
 
 class AppStore {
@@ -1636,6 +2020,44 @@ class AppStore {
     this.notify('VAULT_UNLOCKED');
     this.notify('CLOUD_SYNC_COMPLETED');
     return true;
+  }
+
+  /**
+   * Esegue la sincronizzazione intelligente bidirezionale con GitHub Cloud (2-Way Smart Sync).
+   * Scarica, fonde i fornitori/forniture e ricarica i dati senza mai sovrascrivere o perdere dati.
+   */
+  async syncWithCloud(token, gistId) {
+    if (!this.isUnlocked || !this.sessionPassword) {
+      throw new Error('Impossibile sincronizzare: Vault bloccato.');
+    }
+
+    const t = token || this.data.settings?.githubToken;
+    const g = gistId || this.data.settings?.githubGistId;
+
+    if (!t) {
+      throw new Error('Token GitHub non impostato.');
+    }
+
+    const syncRes = await GitHubSyncManager.smartSync(t, g, this.sessionPassword, this.data);
+
+    // Aggiorna dati in memoria
+    this.data = syncRes.mergedData;
+    if (!this.data.settings) this.data.settings = {};
+    this.data.settings.githubToken = t;
+    this.data.settings.githubGistId = syncRes.gistId;
+    this.data.settings.lastCloudSyncDate = syncRes.updatedAt;
+
+    // Persistenza locale cifrata
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(syncRes.envelope));
+
+    // Notifica modifiche
+    this.notify('SUPPLIERS_UPDATED');
+    this.notify('SUPPLIES_UPDATED');
+    this.notify('SETTINGS_UPDATED');
+    this.notify('DATA_SAVED');
+    this.notify('CLOUD_SYNC_COMPLETED', syncRes);
+
+    return syncRes;
   }
 
   // --- METODI GESTIONE FORNITORI E LISTINI ---
@@ -2313,6 +2735,7 @@ Devi restituire ESCLUSIVAMENTE un JSON conforme allo schema specificato, senza b
 
 
 
+
 class AuthModal {
   constructor(overlayElement) {
     this.overlay = overlayElement;
@@ -2374,6 +2797,29 @@ class AuthModal {
           <button type="submit" id="btn-submit-auth" class="btn btn-primary btn-block btn-lg mt-3">
             <span>${isInitialized ? '🔓 Sblocca Vault' : '🚀 Inizializza Vault Protetto'}</span>
           </button>
+          ${!isInitialized ? `
+            <div class="auth-cloud-onboarding-box mt-3 p-3 text-center border-rounded" style="background: rgba(59, 130, 246, 0.08); border: 1px dashed rgba(59, 130, 246, 0.4);">
+              <p class="mb-1 font-weight-bold" style="color: var(--primary);">📱 Usi già ContiFor sullo Smartphone?</p>
+              <p class="text-subtle text-sm mb-2">Collega il tuo account GitHub per sincronizzare subito tutti i tuoi dati su questo computer.</p>
+              <button type="button" id="btn-toggle-cloud-import" class="btn btn-outline btn-sm">
+                ☁️ Importa dati da GitHub Cloud
+              </button>
+
+              <div id="auth-cloud-import-form" class="hidden mt-3 text-left">
+                <div class="form-group mb-2">
+                  <label class="form-label" for="auth-cloud-token">GitHub Personal Access Token (PAT) *</label>
+                  <input type="password" id="auth-cloud-token" class="form-input" placeholder="ghp_...">
+                </div>
+                <div class="form-group mb-2">
+                  <label class="form-label" for="auth-cloud-password">Master Password (quella dello smartphone) *</label>
+                  <input type="password" id="auth-cloud-password" class="form-input" placeholder="La password usata sullo smartphone">
+                </div>
+                <button type="button" id="btn-do-cloud-import" class="btn btn-primary btn-block btn-sm mt-2">
+                  📥 Scarica e Sblocca Vault sul PC
+                </button>
+              </div>
+            </div>
+          ` : ''}
         </form>
 
         <div class="auth-footer">
@@ -2382,14 +2828,18 @@ class AuthModal {
             <span class="sec-pill">⚡ PBKDF2 100k</span>
             <span class="sec-pill">🛡️ Zero-Cloud</span>
           </div>
-          ${isInitialized ? `
-            <div class="auth-restore-hint mt-2">
-              <label class="btn-link" for="auth-restore-file">
-                Hai un backup cifrato? <strong>Ripristina da .json</strong>
-                <input type="file" id="auth-restore-file" accept=".json" class="visually-hidden">
-              </label>
-            </div>
-          ` : ''}
+          <div class="auth-restore-hint mt-2 text-center">
+            ${isInitialized ? `
+              <button type="button" id="btn-auth-cloud-pull" class="btn-link text-subtle text-sm" style="background:none; border:none; cursor:pointer;">
+                ☁️ Sincronizza / Scarica da <strong>GitHub Cloud</strong>
+              </button>
+              <span class="text-subtle"> • </span>
+            ` : ''}
+            <label class="btn-link text-subtle text-sm" for="auth-restore-file" style="cursor:pointer;">
+              Ripristina da <strong>.json</strong>
+              <input type="file" id="auth-restore-file" accept=".json" class="visually-hidden">
+            </label>
+          </div>
         </div>
       </div>
     `;
@@ -2489,6 +2939,90 @@ class AuthModal {
         }
       });
     }
+
+    // Onboarding Cloud per nuovo dispositivo (PC)
+    const toggleCloudBtn = this.overlay.querySelector('#btn-toggle-cloud-import');
+    const cloudImportSection = this.overlay.querySelector('#auth-cloud-import-form');
+    if (toggleCloudBtn && cloudImportSection) {
+      toggleCloudBtn.addEventListener('click', () => {
+        cloudImportSection.classList.toggle('hidden');
+        if (!cloudImportSection.classList.contains('hidden')) {
+          const tInput = this.overlay.querySelector('#auth-cloud-token');
+          tInput?.focus();
+        }
+      });
+    }
+
+    const doCloudImportBtn = this.overlay.querySelector('#btn-do-cloud-import');
+    if (doCloudImportBtn) {
+      doCloudImportBtn.addEventListener('click', async () => {
+        const tokenInput = this.overlay.querySelector('#auth-cloud-token');
+        const pwdInput = this.overlay.querySelector('#auth-cloud-password');
+        const token = tokenInput ? tokenInput.value.trim() : '';
+        const password = pwdInput ? pwdInput.value : '';
+
+        if (!token) {
+          Toast.error('Inserisci il Personal Access Token di GitHub.');
+          tokenInput?.focus();
+          return;
+        }
+        if (!password) {
+          Toast.error('Inserisci la Master Password dello smartphone.');
+          pwdInput?.focus();
+          return;
+        }
+
+        doCloudImportBtn.disabled = true;
+        doCloudImportBtn.textContent = '⏳ Ricerca e download dal Cloud...';
+
+        try {
+          const { gistId, envelope, updatedAt } = await GitHubSyncManager.smartPullVault(token);
+          await store.applyRemoteEncryptedEnvelope(envelope, password);
+          await store.updateSettings({
+            githubToken: token,
+            githubGistId: gistId,
+            lastCloudSyncDate: updatedAt
+          });
+          Toast.success('Vault scaricato e decifrato con successo! Il PC è ora allineato allo smartphone.');
+          this.hide();
+        } catch (err) {
+          Toast.error(`Errore collegamento Cloud: ${err.message}`);
+          doCloudImportBtn.disabled = false;
+          doCloudImportBtn.textContent = '📥 Scarica e Sblocca Vault sul PC';
+        }
+      });
+    }
+
+    // Pull rapido da schermata di sblocco esistente
+    const authCloudPullBtn = this.overlay.querySelector('#btn-auth-cloud-pull');
+    if (authCloudPullBtn) {
+      authCloudPullBtn.addEventListener('click', async () => {
+        const settings = store.getSettings();
+        let token = settings.githubToken;
+        if (!token) {
+          token = prompt('Inserisci il tuo Personal Access Token GitHub (ghp_...):');
+          if (!token) return;
+        }
+        const password = prompt('Inserisci la Master Password del Vault:');
+        if (!password) return;
+
+        authCloudPullBtn.textContent = '⏳ Download...';
+        try {
+          const { gistId, envelope, updatedAt } = await GitHubSyncManager.smartPullVault(token, settings.githubGistId);
+          await store.applyRemoteEncryptedEnvelope(envelope, password);
+          await store.updateSettings({
+            githubToken: token,
+            githubGistId: gistId,
+            lastCloudSyncDate: updatedAt
+          });
+          Toast.success('Vault sincronizzato con successo dal Cloud!');
+          this.hide();
+        } catch (err) {
+          Toast.error(`Errore ripristino cloud: ${err.message}`);
+          authCloudPullBtn.textContent = '☁️ Sincronizza / Scarica da GitHub Cloud';
+        }
+      });
+    }
   }
 }
 
@@ -2500,6 +3034,7 @@ class AuthModal {
  * Acquisizione Appunti Manoscritti, Scansione Rapida (Pesi & Calcoli),
  * Audit Matematico Automatico, Validazione Fornitore Obbligatoria & Generazione Fattura PDF A4.
  */
+
 
 
 
@@ -2522,6 +3057,8 @@ class ScanView {
     this.detectedGrandTotal = null;
     this.detectedAdditionsCount = 0;
     this.detectedMultiplicationsCount = 0;
+    this.pendingScans = [];
+    this.activePendingScanId = null;
   }
 
   render() {
@@ -2556,6 +3093,9 @@ class ScanView {
             </div>
           </button>
         </div>
+
+        <!-- Coda Foto in Sospeso (persistenti su disco se Gemini ha troppe richieste) -->
+        <div id="pending-scans-container"></div>
 
         <!-- Pannello Configurazione & Scatto -->
         <div class="card scan-setup-card mt-3">
@@ -2634,13 +3174,19 @@ class ScanView {
                 Google AI Studio ha riscontrato un rallentamento o troppe richieste contemporanee (Rate Limit 429).
               </p>
               <div class="ai-error-hint mt-2">
-                💡 <strong>La foto è conservata in memoria:</strong> tocca il pulsante qui sotto per riprovare subito senza dover scattare una nuova foto.
+                💾 <strong>La foto è salvata automaticamente sul dispositivo:</strong> anche se chiudi l'app o fai altre operazioni, la ritroverai sempre in alto pronta da elaborare o da eliminare quando vuoi.
               </div>
             </div>
           </div>
-          <div class="ai-error-actions mt-3">
-            <button type="button" class="btn btn-primary btn-lg" id="btn-retry-scan">
-              🔄 Riprova Scansione Subito (Stessa Foto)
+          <div class="ai-error-actions mt-3 d-flex gap-2 flex-wrap">
+            <button type="button" class="btn btn-primary" id="btn-retry-scan">
+              🔄 Riprova Ora (Stessa Foto)
+            </button>
+            <button type="button" class="btn btn-outline" id="btn-keep-pending">
+              💾 Conserva tra le Foto in Sospeso
+            </button>
+            <button type="button" class="btn btn-danger btn-sm" id="btn-delete-active-pending">
+              🗑️ Elimina Questa Foto
             </button>
             <button type="button" class="btn btn-subtle" id="btn-dismiss-error">
               Nascondi avviso
@@ -2846,12 +3392,168 @@ class ScanView {
       });
     }
 
+    const keepPendingBtn = this.container.querySelector('#btn-keep-pending');
+    if (keepPendingBtn) {
+      keepPendingBtn.addEventListener('click', () => {
+        this.hideErrorCard();
+        this.currentImageBase64 = null;
+        this.extractedItems = [];
+        const section = this.container.querySelector('#human-in-the-loop-section');
+        if (section) section.classList.add('hidden');
+        this.loadAndRenderPendingScans();
+        Toast.info('Foto conservata negli scatti in sospeso. Puoi continuare o chiudere l\'app.');
+      });
+    }
+
+    const deleteActiveBtn = this.container.querySelector('#btn-delete-active-pending');
+    if (deleteActiveBtn) {
+      deleteActiveBtn.addEventListener('click', async () => {
+        if (this.activePendingScanId) {
+          await PendingScansStorage.delete(this.activePendingScanId);
+          this.activePendingScanId = null;
+        }
+        this.resetScan();
+        await this.loadAndRenderPendingScans();
+        Toast.info('Foto eliminata.');
+      });
+    }
+
     const dismissBtn = this.container.querySelector('#btn-dismiss-error');
     if (dismissBtn) {
       dismissBtn.addEventListener('click', () => {
         this.hideErrorCard();
       });
     }
+
+    // Carica gli scatti precedentemente salvati in sospeso
+    this.loadAndRenderPendingScans();
+  }
+
+  /**
+   * Carica e visualizza la coda degli scatti in sospeso (es. bloccati da troppe richieste Gemini)
+   */
+  async loadAndRenderPendingScans() {
+    const container = this.container.querySelector('#pending-scans-container');
+    if (!container) return;
+
+    try {
+      this.pendingScans = await PendingScansStorage.getAll();
+    } catch (e) {
+      this.pendingScans = [];
+    }
+
+    if (this.pendingScans.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+
+    const suppliers = store.getSuppliers();
+    const getSupName = (supId) => {
+      const s = suppliers.find(x => x.id === supId);
+      return s ? s.name : null;
+    };
+
+    container.innerHTML = `
+      <div class="card pending-scans-card mt-3">
+        <div class="card-header-clean d-flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h3 class="card-title text-warning">📸 Foto in Sospeso (${this.pendingScans.length})</h3>
+            <p class="card-subtitle">Scatti conservati sul dispositivo non elaborati subito (es. troppe richieste Gemini). Puoi riprovare ora o eliminarli.</p>
+          </div>
+          <span class="badge badge-warning">${this.pendingScans.length} in sospeso</span>
+        </div>
+
+        <div class="pending-scans-list mt-3">
+          ${this.pendingScans.map(item => `
+            <div class="pending-scan-item p-3 mb-2" data-id="${item.id}">
+              <div class="d-flex items-center gap-3 flex-wrap">
+                <img src="data:${item.mimeType};base64,${item.imageBase64}" 
+                     class="pending-scan-thumb" 
+                     alt="Anteprima foto" 
+                     title="Clicca per visualizzare nell'anteprima grande">
+                <div class="pending-scan-info flex-1">
+                  <strong>${item.customSupplierName || getSupName(item.supplierId) || 'Fornitore non specificato'}</strong>
+                  <small class="d-block text-subtle">
+                    Scattata il ${new Date(item.createdAt).toLocaleString('it-IT')} • Modalità: ${item.scanMode === 'quick' ? 'Rapida (Pesi & Calcoli)' : 'Con Listino'}
+                  </small>
+                  ${item.errorMessage ? `<small class="text-danger d-block mt-1 font-weight-bold">⚠️ ${item.errorMessage}</small>` : ''}
+                </div>
+                <div class="pending-scan-actions">
+                  <button type="button" class="btn btn-primary btn-sm btn-process-pending" data-id="${item.id}">
+                    ⚡ Elabora con Gemini Ora
+                  </button>
+                  <button type="button" class="btn btn-outline btn-sm btn-delete-pending" data-id="${item.id}">
+                    🗑️ Elimina Foto
+                  </button>
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    // Handler per elaborazione scatto in sospeso
+    container.querySelectorAll('.btn-process-pending').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const id = e.currentTarget.dataset.id;
+        const item = this.pendingScans.find(s => s.id === id);
+        if (!item) return;
+
+        this.activePendingScanId = item.id;
+        this.currentImageBase64 = item.imageBase64;
+        this.currentMimeType = item.mimeType;
+        this.selectedSupplierId = item.supplierId || this.selectedSupplierId;
+        this.customSupplierName = item.customSupplierName || '';
+        this.scanMode = item.scanMode || 'quick';
+        this.documentDate = item.documentDate || this.documentDate;
+
+        const supSelect = this.container.querySelector('#scan-supplier-select');
+        if (supSelect) supSelect.value = this.selectedSupplierId || '';
+        const customInput = this.container.querySelector('#scan-custom-supplier-input');
+        if (customInput) customInput.value = this.customSupplierName;
+        const dateInput = this.container.querySelector('#scan-date-input');
+        if (dateInput) dateInput.value = this.documentDate;
+
+        const imgEl = this.container.querySelector('#scanned-image-preview');
+        if (imgEl) imgEl.src = `data:${item.mimeType};base64,${item.imageBase64}`;
+        this.showImagePreviewSection();
+
+        Toast.info('Caricamento foto in sospeso ed elaborazione con Gemini in corso...');
+        await this.executeOcrAnalysis();
+      });
+    });
+
+    // Handler per cancellazione scatto in sospeso
+    container.querySelectorAll('.btn-delete-pending').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const id = e.currentTarget.dataset.id;
+        if (confirm('Vuoi davvero eliminare questa foto memorizzata?')) {
+          await PendingScansStorage.delete(id);
+          if (this.activePendingScanId === id) {
+            this.resetScan();
+          }
+          await this.loadAndRenderPendingScans();
+          Toast.info('Foto eliminata dagli scatti in sospeso.');
+        }
+      });
+    });
+
+    // Clic miniatura per ingrandire
+    container.querySelectorAll('.pending-scan-thumb').forEach(thumb => {
+      thumb.addEventListener('click', (e) => {
+        const parent = e.target.closest('.pending-scan-item');
+        const id = parent?.dataset.id;
+        const item = this.pendingScans.find(s => s.id === id);
+        if (item) {
+          const imgEl = this.container.querySelector('#scanned-image-preview');
+          if (imgEl) imgEl.src = `data:${item.mimeType};base64,${item.imageBase64}`;
+          this.showImagePreviewSection();
+          const previewCard = this.container.querySelector('.image-preview-card');
+          previewCard?.scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    });
   }
 
   async handleImageSelected(file) {
@@ -2863,6 +3565,7 @@ class ScanView {
       const { base64, mimeType } = await GeminiOCRClient.compressImage(file);
       this.currentImageBase64 = base64;
       this.currentMimeType = mimeType;
+      this.activePendingScanId = null;
 
       const imgEl = this.container.querySelector('#scanned-image-preview');
       if (imgEl) imgEl.src = `data:${mimeType};base64,${base64}`;
@@ -2878,7 +3581,7 @@ class ScanView {
   }
 
   /**
-   * Esegue o riprova l'analisi OCR sfruttando l'immagine già conservata in memoria
+   * Esegue o riprova l'analisi OCR sfruttando l'immagine già conservata in memoria o su disco
    */
   async executeOcrAnalysis() {
     if (!this.currentImageBase64) {
@@ -2907,9 +3610,36 @@ class ScanView {
       });
 
       this.processOCRResult(ocrResult);
+
+      // Se era un elemento in sospeso salvato in precedenza, rimuovilo dalla coda
+      if (this.activePendingScanId) {
+        await PendingScansStorage.delete(this.activePendingScanId);
+        this.activePendingScanId = null;
+        await this.loadAndRenderPendingScans();
+      }
+
       Toast.success('Analisi OCR e controllo aritmetico completati con successo!');
     } catch (err) {
       console.error('Errore durante la scansione:', err);
+
+      // Persistenza automatica della foto su storage (IndexedDB/localStorage)
+      try {
+        const saved = await PendingScansStorage.save({
+          id: this.activePendingScanId || undefined,
+          imageBase64: this.currentImageBase64,
+          mimeType: this.currentMimeType,
+          supplierId: this.selectedSupplierId,
+          customSupplierName: this.customSupplierName,
+          scanMode: this.scanMode,
+          documentDate: this.documentDate,
+          errorMessage: err.message || 'Gemini ha troppe richieste al momento (Rate Limit 429)'
+        });
+        this.activePendingScanId = saved.id;
+        await this.loadAndRenderPendingScans();
+      } catch (saveErr) {
+        console.warn('Errore salvataggio automatico foto in sospeso:', saveErr);
+      }
+
       this.showErrorCard(err.message);
       Toast.error(`Errore analisi: ${err.message}`);
     } finally {
@@ -3464,6 +4194,7 @@ class ScanView {
 
   resetScan() {
     this.currentImageBase64 = null;
+    this.activePendingScanId = null;
     this.extractedItems = [];
     this.documentTitle = '';
     this.notes = '';
@@ -4910,20 +5641,23 @@ class SettingsView {
             </div>
 
             <div class="d-flex gap-2 flex-wrap mt-3">
-              <button type="button" id="btn-test-github-token" class="btn btn-outline">
-                ⚡ Verifica Token
-              </button>
-              <button type="button" id="btn-create-gist" class="btn btn-secondary">
-                🚀 Crea Gist Privato Automatico
-              </button>
-              <button type="button" id="btn-push-vault" class="btn btn-primary">
-                ☁️ Invia al Cloud (Push)
+              <button type="button" id="btn-sync-now" class="btn btn-primary">
+                ☁️ Sincronizza Ora (2-Way Bidirezionale)
               </button>
               <button type="button" id="btn-pull-vault" class="btn btn-outline">
                 📥 Scarica dal Cloud (Pull)
               </button>
+              <button type="button" id="btn-push-vault" class="btn btn-outline">
+                📤 Invia al Cloud (Push Forzato)
+              </button>
+              <button type="button" id="btn-test-github-token" class="btn btn-subtle">
+                ⚡ Verifica Token
+              </button>
+              <button type="button" id="btn-create-gist" class="btn btn-subtle">
+                🚀 Crea Gist Privato
+              </button>
               <button type="submit" class="btn btn-subtle">
-                💾 Salva Configurazione Cloud
+                💾 Salva Token
               </button>
             </div>
           </form>
@@ -5180,6 +5914,39 @@ class SettingsView {
       });
     }
 
+    // Sincronizzazione Bidirezionale Intelligente (2-Way Smart Sync)
+    const syncNowBtn = this.container.querySelector('#btn-sync-now');
+    if (syncNowBtn) {
+      syncNowBtn.addEventListener('click', async () => {
+        const token = (tokenInput ? tokenInput.value.trim() : '') || store.getSettings().githubToken;
+        const gistId = (gistInput ? gistInput.value.trim() : '') || store.getSettings().githubGistId;
+
+        if (!token) {
+          Toast.error('Inserisci il Token GitHub per sincronizzare i dati.');
+          tokenInput?.focus();
+          return;
+        }
+
+        syncNowBtn.disabled = true;
+        syncNowBtn.textContent = '⏳ Sincronizzazione in corso...';
+        try {
+          const res = await store.syncWithCloud(token, gistId);
+          if (gistInput) gistInput.value = res.gistId;
+          updateSyncStatusDisplay(res.updatedAt);
+          if (res.stats && (res.stats.newSuppliers > 0 || res.stats.newSupplies > 0)) {
+            Toast.success(`Sincronizzazione completata! ${res.stats.newSuppliers} nuovi fornitori e ${res.stats.newSupplies} nuove forniture importati dal Cloud.`);
+          } else {
+            Toast.success('Dati allineati con il Cloud! Archivio aggiornato con tutti i dispositivi.');
+          }
+        } catch (err) {
+          Toast.error(`Errore sincronizzazione: ${err.message}`);
+        } finally {
+          syncNowBtn.disabled = false;
+          syncNowBtn.textContent = '☁️ Sincronizza Ora (2-Way Bidirezionale)';
+        }
+      });
+    }
+
     // Crea Gist Privato Automatico
     const createGistBtn = this.container.querySelector('#btn-create-gist');
     if (createGistBtn) {
@@ -5208,12 +5975,12 @@ class SettingsView {
           Toast.error(`Errore creazione Gist: ${err.message}`);
         } finally {
           createGistBtn.disabled = false;
-          createGistBtn.textContent = '🚀 Crea Gist Privato Automatico';
+          createGistBtn.textContent = '🚀 Crea Gist Privato';
         }
       });
     }
 
-    // Invia al Cloud (Push)
+    // Invia al Cloud (Push Forzato)
     const pushBtn = this.container.querySelector('#btn-push-vault');
     if (pushBtn) {
       pushBtn.addEventListener('click', async () => {
@@ -5227,12 +5994,11 @@ class SettingsView {
         }
 
         pushBtn.disabled = true;
-        pushBtn.textContent = '⏳ Sincronizzazione...';
+        pushBtn.textContent = '⏳ Caricamento...';
         try {
           const envelope = store.getEncryptedEnvelope();
           if (!envelope) throw new Error('Nessun dato cifrato presente.');
           
-          // smartPushVault cerca o crea automaticamente il Gist se non specificato
           const res = await GitHubSyncManager.smartPushVault(token, gistId, envelope);
           
           if (gistInput) gistInput.value = res.gistId;
@@ -5242,12 +6008,12 @@ class SettingsView {
             lastCloudSyncDate: res.updatedAt
           });
           updateSyncStatusDisplay(res.updatedAt);
-          Toast.success('Vault cifrato caricato con successo sul Cloud GitHub!');
+          Toast.success('Vault locale inviato con successo sul Cloud GitHub!');
         } catch (err) {
           Toast.error(`Errore Push Cloud: ${err.message}`);
         } finally {
           pushBtn.disabled = false;
-          pushBtn.textContent = '☁️ Invia al Cloud (Push)';
+          pushBtn.textContent = '📤 Invia al Cloud (Push Forzato)';
         }
       });
     }
@@ -5282,12 +6048,11 @@ class SettingsView {
             githubGistId: foundGistId,
             lastCloudSyncDate: updatedAt
           });
+          updateSyncStatusDisplay(updatedAt);
           Toast.success('Dati scaricati dal Cloud e decifrati con successo!');
-          setTimeout(() => {
-            window.location.reload();
-          }, 600);
         } catch (err) {
           Toast.error(`Errore Pull Cloud: ${err.message}`);
+        } finally {
           pullBtn.disabled = false;
           pullBtn.textContent = '📥 Scarica dal Cloud (Pull)';
         }
@@ -5566,17 +6331,8 @@ class App {
       syncBtn.textContent = '⏳ Sync...';
 
       try {
-        const envelope = store.getEncryptedEnvelope();
-        if (!envelope) throw new Error('Nessun dato cifrato presente da sincronizzare.');
-
-        // smartPushVault crea o individua automaticamente il Gist se non impostato
-        const res = await GitHubSyncManager.smartPushVault(token, gistId, envelope);
-
-        await store.updateSettings({
-          githubToken: token,
-          githubGistId: res.gistId,
-          lastCloudSyncDate: res.updatedAt
-        });
+        // Esegue la sincronizzazione bidirezionale intelligente (Pull + Merge + Push)
+        const res = await store.syncWithCloud(token, gistId);
 
         // Se l'utente è sulla schermata impostazioni, aggiorna i campi a video senza ricaricare la pagina
         if (domGistInput) domGistInput.value = res.gistId;
@@ -5589,7 +6345,16 @@ class App {
           `;
         }
 
-        Toast.success('Sincronizzazione Cloud completata con successo!');
+        if (res.stats && (res.stats.newSuppliers > 0 || res.stats.newSupplies > 0)) {
+          Toast.success(`Sincronizzazione completata! ${res.stats.newSuppliers} nuovi fornitori e ${res.stats.newSupplies} nuove forniture importati dal Cloud.`);
+        } else {
+          Toast.success('Dati allineati con il Cloud! Il database è aggiornato con tutti i tuoi dispositivi.');
+        }
+
+        // Ri-renderizza la vista attiva per mostrare subito i nuovi fornitori/dati a video
+        if (this.views[this.currentTab]) {
+          this.views[this.currentTab].render();
+        }
       } catch (err) {
         Toast.error(`Errore sincronizzazione: ${err.message}`);
       } finally {

@@ -9,6 +9,7 @@ import { store } from '../store/state.js';
 import { GeminiOCRClient } from '../gemini/geminiClient.js';
 import { Toast } from '../ui/toast.js';
 import { InvoiceGenerator } from '../ui/invoiceGenerator.js';
+import { PendingScansStorage } from '../storage/pendingScansStorage.js';
 
 export class ScanView {
   constructor(container) {
@@ -26,6 +27,8 @@ export class ScanView {
     this.detectedGrandTotal = null;
     this.detectedAdditionsCount = 0;
     this.detectedMultiplicationsCount = 0;
+    this.pendingScans = [];
+    this.activePendingScanId = null;
   }
 
   render() {
@@ -60,6 +63,9 @@ export class ScanView {
             </div>
           </button>
         </div>
+
+        <!-- Coda Foto in Sospeso (persistenti su disco se Gemini ha troppe richieste) -->
+        <div id="pending-scans-container"></div>
 
         <!-- Pannello Configurazione & Scatto -->
         <div class="card scan-setup-card mt-3">
@@ -138,13 +144,19 @@ export class ScanView {
                 Google AI Studio ha riscontrato un rallentamento o troppe richieste contemporanee (Rate Limit 429).
               </p>
               <div class="ai-error-hint mt-2">
-                💡 <strong>La foto è conservata in memoria:</strong> tocca il pulsante qui sotto per riprovare subito senza dover scattare una nuova foto.
+                💾 <strong>La foto è salvata automaticamente sul dispositivo:</strong> anche se chiudi l'app o fai altre operazioni, la ritroverai sempre in alto pronta da elaborare o da eliminare quando vuoi.
               </div>
             </div>
           </div>
-          <div class="ai-error-actions mt-3">
-            <button type="button" class="btn btn-primary btn-lg" id="btn-retry-scan">
-              🔄 Riprova Scansione Subito (Stessa Foto)
+          <div class="ai-error-actions mt-3 d-flex gap-2 flex-wrap">
+            <button type="button" class="btn btn-primary" id="btn-retry-scan">
+              🔄 Riprova Ora (Stessa Foto)
+            </button>
+            <button type="button" class="btn btn-outline" id="btn-keep-pending">
+              💾 Conserva tra le Foto in Sospeso
+            </button>
+            <button type="button" class="btn btn-danger btn-sm" id="btn-delete-active-pending">
+              🗑️ Elimina Questa Foto
             </button>
             <button type="button" class="btn btn-subtle" id="btn-dismiss-error">
               Nascondi avviso
@@ -350,12 +362,168 @@ export class ScanView {
       });
     }
 
+    const keepPendingBtn = this.container.querySelector('#btn-keep-pending');
+    if (keepPendingBtn) {
+      keepPendingBtn.addEventListener('click', () => {
+        this.hideErrorCard();
+        this.currentImageBase64 = null;
+        this.extractedItems = [];
+        const section = this.container.querySelector('#human-in-the-loop-section');
+        if (section) section.classList.add('hidden');
+        this.loadAndRenderPendingScans();
+        Toast.info('Foto conservata negli scatti in sospeso. Puoi continuare o chiudere l\'app.');
+      });
+    }
+
+    const deleteActiveBtn = this.container.querySelector('#btn-delete-active-pending');
+    if (deleteActiveBtn) {
+      deleteActiveBtn.addEventListener('click', async () => {
+        if (this.activePendingScanId) {
+          await PendingScansStorage.delete(this.activePendingScanId);
+          this.activePendingScanId = null;
+        }
+        this.resetScan();
+        await this.loadAndRenderPendingScans();
+        Toast.info('Foto eliminata.');
+      });
+    }
+
     const dismissBtn = this.container.querySelector('#btn-dismiss-error');
     if (dismissBtn) {
       dismissBtn.addEventListener('click', () => {
         this.hideErrorCard();
       });
     }
+
+    // Carica gli scatti precedentemente salvati in sospeso
+    this.loadAndRenderPendingScans();
+  }
+
+  /**
+   * Carica e visualizza la coda degli scatti in sospeso (es. bloccati da troppe richieste Gemini)
+   */
+  async loadAndRenderPendingScans() {
+    const container = this.container.querySelector('#pending-scans-container');
+    if (!container) return;
+
+    try {
+      this.pendingScans = await PendingScansStorage.getAll();
+    } catch (e) {
+      this.pendingScans = [];
+    }
+
+    if (this.pendingScans.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+
+    const suppliers = store.getSuppliers();
+    const getSupName = (supId) => {
+      const s = suppliers.find(x => x.id === supId);
+      return s ? s.name : null;
+    };
+
+    container.innerHTML = `
+      <div class="card pending-scans-card mt-3">
+        <div class="card-header-clean d-flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h3 class="card-title text-warning">📸 Foto in Sospeso (${this.pendingScans.length})</h3>
+            <p class="card-subtitle">Scatti conservati sul dispositivo non elaborati subito (es. troppe richieste Gemini). Puoi riprovare ora o eliminarli.</p>
+          </div>
+          <span class="badge badge-warning">${this.pendingScans.length} in sospeso</span>
+        </div>
+
+        <div class="pending-scans-list mt-3">
+          ${this.pendingScans.map(item => `
+            <div class="pending-scan-item p-3 mb-2" data-id="${item.id}">
+              <div class="d-flex items-center gap-3 flex-wrap">
+                <img src="data:${item.mimeType};base64,${item.imageBase64}" 
+                     class="pending-scan-thumb" 
+                     alt="Anteprima foto" 
+                     title="Clicca per visualizzare nell'anteprima grande">
+                <div class="pending-scan-info flex-1">
+                  <strong>${item.customSupplierName || getSupName(item.supplierId) || 'Fornitore non specificato'}</strong>
+                  <small class="d-block text-subtle">
+                    Scattata il ${new Date(item.createdAt).toLocaleString('it-IT')} • Modalità: ${item.scanMode === 'quick' ? 'Rapida (Pesi & Calcoli)' : 'Con Listino'}
+                  </small>
+                  ${item.errorMessage ? `<small class="text-danger d-block mt-1 font-weight-bold">⚠️ ${item.errorMessage}</small>` : ''}
+                </div>
+                <div class="pending-scan-actions">
+                  <button type="button" class="btn btn-primary btn-sm btn-process-pending" data-id="${item.id}">
+                    ⚡ Elabora con Gemini Ora
+                  </button>
+                  <button type="button" class="btn btn-outline btn-sm btn-delete-pending" data-id="${item.id}">
+                    🗑️ Elimina Foto
+                  </button>
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    // Handler per elaborazione scatto in sospeso
+    container.querySelectorAll('.btn-process-pending').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const id = e.currentTarget.dataset.id;
+        const item = this.pendingScans.find(s => s.id === id);
+        if (!item) return;
+
+        this.activePendingScanId = item.id;
+        this.currentImageBase64 = item.imageBase64;
+        this.currentMimeType = item.mimeType;
+        this.selectedSupplierId = item.supplierId || this.selectedSupplierId;
+        this.customSupplierName = item.customSupplierName || '';
+        this.scanMode = item.scanMode || 'quick';
+        this.documentDate = item.documentDate || this.documentDate;
+
+        const supSelect = this.container.querySelector('#scan-supplier-select');
+        if (supSelect) supSelect.value = this.selectedSupplierId || '';
+        const customInput = this.container.querySelector('#scan-custom-supplier-input');
+        if (customInput) customInput.value = this.customSupplierName;
+        const dateInput = this.container.querySelector('#scan-date-input');
+        if (dateInput) dateInput.value = this.documentDate;
+
+        const imgEl = this.container.querySelector('#scanned-image-preview');
+        if (imgEl) imgEl.src = `data:${item.mimeType};base64,${item.imageBase64}`;
+        this.showImagePreviewSection();
+
+        Toast.info('Caricamento foto in sospeso ed elaborazione con Gemini in corso...');
+        await this.executeOcrAnalysis();
+      });
+    });
+
+    // Handler per cancellazione scatto in sospeso
+    container.querySelectorAll('.btn-delete-pending').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const id = e.currentTarget.dataset.id;
+        if (confirm('Vuoi davvero eliminare questa foto memorizzata?')) {
+          await PendingScansStorage.delete(id);
+          if (this.activePendingScanId === id) {
+            this.resetScan();
+          }
+          await this.loadAndRenderPendingScans();
+          Toast.info('Foto eliminata dagli scatti in sospeso.');
+        }
+      });
+    });
+
+    // Clic miniatura per ingrandire
+    container.querySelectorAll('.pending-scan-thumb').forEach(thumb => {
+      thumb.addEventListener('click', (e) => {
+        const parent = e.target.closest('.pending-scan-item');
+        const id = parent?.dataset.id;
+        const item = this.pendingScans.find(s => s.id === id);
+        if (item) {
+          const imgEl = this.container.querySelector('#scanned-image-preview');
+          if (imgEl) imgEl.src = `data:${item.mimeType};base64,${item.imageBase64}`;
+          this.showImagePreviewSection();
+          const previewCard = this.container.querySelector('.image-preview-card');
+          previewCard?.scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    });
   }
 
   async handleImageSelected(file) {
@@ -367,6 +535,7 @@ export class ScanView {
       const { base64, mimeType } = await GeminiOCRClient.compressImage(file);
       this.currentImageBase64 = base64;
       this.currentMimeType = mimeType;
+      this.activePendingScanId = null;
 
       const imgEl = this.container.querySelector('#scanned-image-preview');
       if (imgEl) imgEl.src = `data:${mimeType};base64,${base64}`;
@@ -382,7 +551,7 @@ export class ScanView {
   }
 
   /**
-   * Esegue o riprova l'analisi OCR sfruttando l'immagine già conservata in memoria
+   * Esegue o riprova l'analisi OCR sfruttando l'immagine già conservata in memoria o su disco
    */
   async executeOcrAnalysis() {
     if (!this.currentImageBase64) {
@@ -411,9 +580,36 @@ export class ScanView {
       });
 
       this.processOCRResult(ocrResult);
+
+      // Se era un elemento in sospeso salvato in precedenza, rimuovilo dalla coda
+      if (this.activePendingScanId) {
+        await PendingScansStorage.delete(this.activePendingScanId);
+        this.activePendingScanId = null;
+        await this.loadAndRenderPendingScans();
+      }
+
       Toast.success('Analisi OCR e controllo aritmetico completati con successo!');
     } catch (err) {
       console.error('Errore durante la scansione:', err);
+
+      // Persistenza automatica della foto su storage (IndexedDB/localStorage)
+      try {
+        const saved = await PendingScansStorage.save({
+          id: this.activePendingScanId || undefined,
+          imageBase64: this.currentImageBase64,
+          mimeType: this.currentMimeType,
+          supplierId: this.selectedSupplierId,
+          customSupplierName: this.customSupplierName,
+          scanMode: this.scanMode,
+          documentDate: this.documentDate,
+          errorMessage: err.message || 'Gemini ha troppe richieste al momento (Rate Limit 429)'
+        });
+        this.activePendingScanId = saved.id;
+        await this.loadAndRenderPendingScans();
+      } catch (saveErr) {
+        console.warn('Errore salvataggio automatico foto in sospeso:', saveErr);
+      }
+
       this.showErrorCard(err.message);
       Toast.error(`Errore analisi: ${err.message}`);
     } finally {
@@ -968,6 +1164,7 @@ export class ScanView {
 
   resetScan() {
     this.currentImageBase64 = null;
+    this.activePendingScanId = null;
     this.extractedItems = [];
     this.documentTitle = '';
     this.notes = '';

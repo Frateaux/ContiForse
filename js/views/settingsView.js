@@ -105,20 +105,23 @@ export class SettingsView {
             </div>
 
             <div class="d-flex gap-2 flex-wrap mt-3">
-              <button type="button" id="btn-test-github-token" class="btn btn-outline">
-                ⚡ Verifica Token
-              </button>
-              <button type="button" id="btn-create-gist" class="btn btn-secondary">
-                🚀 Crea Gist Privato Automatico
-              </button>
-              <button type="button" id="btn-push-vault" class="btn btn-primary">
-                ☁️ Invia al Cloud (Push)
+              <button type="button" id="btn-sync-now" class="btn btn-primary">
+                ☁️ Sincronizza Ora (2-Way Bidirezionale)
               </button>
               <button type="button" id="btn-pull-vault" class="btn btn-outline">
                 📥 Scarica dal Cloud (Pull)
               </button>
+              <button type="button" id="btn-push-vault" class="btn btn-outline">
+                📤 Invia al Cloud (Push Forzato)
+              </button>
+              <button type="button" id="btn-test-github-token" class="btn btn-subtle">
+                ⚡ Verifica Token
+              </button>
+              <button type="button" id="btn-create-gist" class="btn btn-subtle">
+                🚀 Crea Gist Privato
+              </button>
               <button type="submit" class="btn btn-subtle">
-                💾 Salva Configurazione Cloud
+                💾 Salva Token
               </button>
             </div>
           </form>
@@ -375,6 +378,39 @@ export class SettingsView {
       });
     }
 
+    // Sincronizzazione Bidirezionale Intelligente (2-Way Smart Sync)
+    const syncNowBtn = this.container.querySelector('#btn-sync-now');
+    if (syncNowBtn) {
+      syncNowBtn.addEventListener('click', async () => {
+        const token = (tokenInput ? tokenInput.value.trim() : '') || store.getSettings().githubToken;
+        const gistId = (gistInput ? gistInput.value.trim() : '') || store.getSettings().githubGistId;
+
+        if (!token) {
+          Toast.error('Inserisci il Token GitHub per sincronizzare i dati.');
+          tokenInput?.focus();
+          return;
+        }
+
+        syncNowBtn.disabled = true;
+        syncNowBtn.textContent = '⏳ Sincronizzazione in corso...';
+        try {
+          const res = await store.syncWithCloud(token, gistId);
+          if (gistInput) gistInput.value = res.gistId;
+          updateSyncStatusDisplay(res.updatedAt);
+          if (res.stats && (res.stats.newSuppliers > 0 || res.stats.newSupplies > 0)) {
+            Toast.success(`Sincronizzazione completata! ${res.stats.newSuppliers} nuovi fornitori e ${res.stats.newSupplies} nuove forniture importati dal Cloud.`);
+          } else {
+            Toast.success('Dati allineati con il Cloud! Archivio aggiornato con tutti i dispositivi.');
+          }
+        } catch (err) {
+          Toast.error(`Errore sincronizzazione: ${err.message}`);
+        } finally {
+          syncNowBtn.disabled = false;
+          syncNowBtn.textContent = '☁️ Sincronizza Ora (2-Way Bidirezionale)';
+        }
+      });
+    }
+
     // Crea Gist Privato Automatico
     const createGistBtn = this.container.querySelector('#btn-create-gist');
     if (createGistBtn) {
@@ -403,12 +439,12 @@ export class SettingsView {
           Toast.error(`Errore creazione Gist: ${err.message}`);
         } finally {
           createGistBtn.disabled = false;
-          createGistBtn.textContent = '🚀 Crea Gist Privato Automatico';
+          createGistBtn.textContent = '🚀 Crea Gist Privato';
         }
       });
     }
 
-    // Invia al Cloud (Push)
+    // Invia al Cloud (Push Forzato)
     const pushBtn = this.container.querySelector('#btn-push-vault');
     if (pushBtn) {
       pushBtn.addEventListener('click', async () => {
@@ -422,12 +458,11 @@ export class SettingsView {
         }
 
         pushBtn.disabled = true;
-        pushBtn.textContent = '⏳ Sincronizzazione...';
+        pushBtn.textContent = '⏳ Caricamento...';
         try {
           const envelope = store.getEncryptedEnvelope();
           if (!envelope) throw new Error('Nessun dato cifrato presente.');
           
-          // smartPushVault cerca o crea automaticamente il Gist se non specificato
           const res = await GitHubSyncManager.smartPushVault(token, gistId, envelope);
           
           if (gistInput) gistInput.value = res.gistId;
@@ -437,12 +472,12 @@ export class SettingsView {
             lastCloudSyncDate: res.updatedAt
           });
           updateSyncStatusDisplay(res.updatedAt);
-          Toast.success('Vault cifrato caricato con successo sul Cloud GitHub!');
+          Toast.success('Vault locale inviato con successo sul Cloud GitHub!');
         } catch (err) {
           Toast.error(`Errore Push Cloud: ${err.message}`);
         } finally {
           pushBtn.disabled = false;
-          pushBtn.textContent = '☁️ Invia al Cloud (Push)';
+          pushBtn.textContent = '📤 Invia al Cloud (Push Forzato)';
         }
       });
     }
@@ -477,12 +512,11 @@ export class SettingsView {
             githubGistId: foundGistId,
             lastCloudSyncDate: updatedAt
           });
+          updateSyncStatusDisplay(updatedAt);
           Toast.success('Dati scaricati dal Cloud e decifrati con successo!');
-          setTimeout(() => {
-            window.location.reload();
-          }, 600);
         } catch (err) {
           Toast.error(`Errore Pull Cloud: ${err.message}`);
+        } finally {
           pullBtn.disabled = false;
           pullBtn.textContent = '📥 Scarica dal Cloud (Pull)';
         }

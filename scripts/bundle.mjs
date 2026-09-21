@@ -5,6 +5,7 @@ const files = [
   'js/config.js',
   'js/crypto/vault.js',
   'js/crypto/biometrics.js',
+  'js/storage/pendingScansStorage.js',
   'js/sync/githubSync.js',
   'js/ui/toast.js',
   'js/ui/charts.js',
