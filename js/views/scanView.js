@@ -128,6 +128,30 @@ export class ScanView {
           </div>
         </div>
 
+        <!-- Card Errore & Tasto Riprova Istantaneo con la stessa foto -->
+        <div id="ai-error-state" class="card ai-error-card hidden mt-3">
+          <div class="ai-error-banner">
+            <div class="ai-error-icon">⚠️</div>
+            <div class="ai-error-content flex-1">
+              <h4 class="ai-error-title" id="ai-error-title">Elaborazione non riuscita</h4>
+              <p class="ai-error-desc" id="ai-error-desc">
+                Google AI Studio ha riscontrato un rallentamento o troppe richieste contemporanee (Rate Limit 429).
+              </p>
+              <div class="ai-error-hint mt-2">
+                💡 <strong>La foto è conservata in memoria:</strong> tocca il pulsante qui sotto per riprovare subito senza dover scattare una nuova foto.
+              </div>
+            </div>
+          </div>
+          <div class="ai-error-actions mt-3">
+            <button type="button" class="btn btn-primary btn-lg" id="btn-retry-scan">
+              🔄 Riprova Scansione Subito (Stessa Foto)
+            </button>
+            <button type="button" class="btn btn-subtle" id="btn-dismiss-error">
+              Nascondi avviso
+            </button>
+          </div>
+        </div>
+
         <!-- Sezione Revisione Human-in-the-Loop & Audit Matematico -->
         <div id="human-in-the-loop-section" class="${this.currentImageBase64 || this.extractedItems.length > 0 ? '' : 'hidden'}">
           
@@ -318,12 +342,27 @@ export class ScanView {
         if (wrapper) wrapper.classList.toggle('collapsed');
       });
     }
+
+    const retryBtn = this.container.querySelector('#btn-retry-scan');
+    if (retryBtn) {
+      retryBtn.addEventListener('click', () => {
+        this.executeOcrAnalysis();
+      });
+    }
+
+    const dismissBtn = this.container.querySelector('#btn-dismiss-error');
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', () => {
+        this.hideErrorCard();
+      });
+    }
   }
 
   async handleImageSelected(file) {
     if (!file) return;
 
     try {
+      this.hideErrorCard();
       this.updateProcessingUI(true);
       const { base64, mimeType } = await GeminiOCRClient.compressImage(file);
       this.currentImageBase64 = base64;
@@ -331,7 +370,30 @@ export class ScanView {
 
       const imgEl = this.container.querySelector('#scanned-image-preview');
       if (imgEl) imgEl.src = `data:${mimeType};base64,${base64}`;
+      this.showImagePreviewSection();
 
+      await this.executeOcrAnalysis();
+    } catch (err) {
+      console.error('Errore durante il caricamento o compressione:', err);
+      this.updateProcessingUI(false);
+      this.showErrorCard(err.message);
+      Toast.error(`Errore caricamento: ${err.message}`);
+    }
+  }
+
+  /**
+   * Esegue o riprova l'analisi OCR sfruttando l'immagine già conservata in memoria
+   */
+  async executeOcrAnalysis() {
+    if (!this.currentImageBase64) {
+      Toast.warning('Nessuna immagine presente da elaborare.');
+      return;
+    }
+
+    this.hideErrorCard();
+    this.updateProcessingUI(true);
+
+    try {
       const settings = store.getSettings();
       const apiKey = settings?.geminiApiKey;
       const targetModel = 'gemini-3.8-flash';
@@ -341,21 +403,58 @@ export class ScanView {
       const catalogNames = (supplier?.priceList || []).map(p => p.name);
 
       const ocrResult = await GeminiOCRClient.analyzeHandwrittenNote({
-        imageBase64: base64,
-        mimeType,
+        imageBase64: this.currentImageBase64,
+        mimeType: this.currentMimeType,
         apiKey,
         model: targetModel,
         productCatalog: catalogNames
       });
 
       this.processOCRResult(ocrResult);
-      Toast.success('Analisi OCR e controllo aritmetico completati!');
+      Toast.success('Analisi OCR e controllo aritmetico completati con successo!');
     } catch (err) {
       console.error('Errore durante la scansione:', err);
+      this.showErrorCard(err.message);
       Toast.error(`Errore analisi: ${err.message}`);
     } finally {
       this.updateProcessingUI(false);
     }
+  }
+
+  showImagePreviewSection() {
+    const section = this.container.querySelector('#human-in-the-loop-section');
+    if (section) section.classList.remove('hidden');
+    const wrapper = this.container.querySelector('#image-preview-wrapper');
+    if (wrapper) wrapper.classList.remove('collapsed');
+  }
+
+  showErrorCard(errorMessage = '') {
+    const errorCard = this.container.querySelector('#ai-error-state');
+    const titleEl = this.container.querySelector('#ai-error-title');
+    const descEl = this.container.querySelector('#ai-error-desc');
+    if (!errorCard) return;
+
+    const lower = (errorMessage || '').toLowerCase();
+    const isRateLimit = lower.includes('429') || 
+                        lower.includes('troppe richieste') || 
+                        lower.includes('resource exhausted') ||
+                        lower.includes('quota');
+
+    if (isRateLimit) {
+      if (titleEl) titleEl.textContent = 'Gemini ha troppe richieste al momento (Rate Limit 429)';
+      if (descEl) descEl.textContent = 'I server di Google AI Studio sono temporaneamente congestionati. La tua foto è al sicuro in memoria: attendi qualche secondo e tocca "Riprova Scansione Subito" qui sotto senza dover rifare la foto.';
+    } else {
+      if (titleEl) titleEl.textContent = 'Elaborazione non riuscita';
+      if (descEl) descEl.textContent = errorMessage || 'Si è verificato un errore durante la connessione con Google AI Studio.';
+    }
+
+    errorCard.classList.remove('hidden');
+    this.showImagePreviewSection();
+  }
+
+  hideErrorCard() {
+    const errorCard = this.container.querySelector('#ai-error-state');
+    if (errorCard) errorCard.classList.add('hidden');
   }
 
   processOCRResult(result) {

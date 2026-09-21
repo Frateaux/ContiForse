@@ -100,7 +100,7 @@
     if ('serviceWorker' in navigator) {
       caches.keys().then(keys => {
         keys.forEach(key => {
-          if (key !== 'contifor-shell-v3.8.4') {
+          if (key !== 'contifor-shell-v3.8.5') {
             caches.delete(key);
           }
         });
@@ -114,6 +114,6 @@
   </script>
 
   <!-- Script Standalone Universale (funziona sia con doppio click locale su file:// che su web server / GitHub Pages) -->
-  <script src="./bundle.js?v=3.8.4"></script>
+  <script src="./bundle.js?v=3.8.5"></script>
 </body>
 </html>

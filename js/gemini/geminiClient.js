@@ -371,6 +371,13 @@ Devi restituire ESCLUSIVAMENTE un JSON conforme allo schema specificato, senza b
         throw new Error('La chiave Google AI Studio non è valida. Verificala nelle Impostazioni.');
       }
 
+      if (response.status === 429) {
+        console.warn(`Gemini Rate Limit (429) su ${currentModel}. Attesa breve prima del prossimo tentativo...`);
+        lastError = new Error('Google AI Studio ha troppe richieste al momento (Rate Limit 429). Premi "Riprova Scansione" tra pochi secondi per rielaborare la stessa foto.');
+        await new Promise(r => setTimeout(r, 1800));
+        continue;
+      }
+
       // Se il modello è deprecato (404) o temporaneamente congestionato (503), prova il modello alternativo
       console.warn(`Tentativo con ${currentModel} fallito (${response.status}: ${errorDetails}). Tentativo con modello alternativo...`);
       lastError = new Error(`Errore Google AI Studio (${response.status}): ${errorDetails}`);
