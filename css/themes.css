@@ -1,0 +1,113 @@
+/**
+ * ContiFor - Temi e Variabili di Stile
+ * Supporto Dark Mode, Light Mode e Modalità Alto Contrasto per Magazzini
+ */
+
+:root {
+  /* Font Stack moderno e ottimizzato per mobile */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Raggi di curvatura per interfaccia touch */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+
+  /* Transizioni fluide */
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+
+  /* Ombre standard */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.15), 0 4px 6px -2px rgba(0, 0, 0, 0.08);
+
+  /* Altezza barra navigazione inferiore su smartphone */
+  --bottom-nav-height: 64px;
+}
+
+/* TEMA SCURO (Default - Ideale per uso notturno e riduzione consumi schermo OLED) */
+[data-theme="dark"], :root {
+  --bg-app: #0b0f19;
+  --bg-surface: #111827;
+  --bg-surface-elevated: #1f2937;
+  --bg-surface-hover: #283548;
+
+  --border-subtle: #1f2937;
+  --border-strong: #374151;
+  --border-focus: #3b82f6;
+
+  --text-main: #f9fafb;
+  --text-muted: #9ca3af;
+  --text-subtle: #6b7280;
+
+  --color-primary: #3b82f6;
+  --color-primary-hover: #2563eb;
+  --color-primary-light: rgba(59, 130, 246, 0.15);
+
+  --color-success: #10b981;
+  --color-success-bg: rgba(16, 185, 129, 0.15);
+  --color-warning: #f59e0b;
+  --color-warning-bg: rgba(245, 158, 11, 0.15);
+  --color-danger: #ef4444;
+  --color-danger-bg: rgba(239, 68, 68, 0.15);
+
+  --input-bg: #0d1320;
+  --input-border: #2d3748;
+}
+
+/* TEMA CHIARO (Ottimale per ambienti soleggiati o banchi vendita illuminati) */
+[data-theme="light"] {
+  --bg-app: #f3f4f6;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f9fafb;
+  --bg-surface-hover: #e5e7eb;
+
+  --border-subtle: #e5e7eb;
+  --border-strong: #cbd5e1;
+  --border-focus: #2563eb;
+
+  --text-main: #111827;
+  --text-muted: #4b5563;
+  --text-subtle: #6b7280;
+
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-light: rgba(37, 99, 235, 0.1);
+
+  --color-success: #059669;
+  --color-success-bg: rgba(5, 150, 105, 0.1);
+  --color-warning: #d97706;
+  --color-warning-bg: rgba(217, 119, 6, 0.1);
+  --color-danger: #dc2626;
+  --color-danger-bg: rgba(220, 38, 38, 0.1);
+
+  --input-bg: #ffffff;
+  --input-border: #cbd5e1;
+}
+
+/* MODALITÀ ALTO CONTRASTO (Ambienti di lavoro industriale, magazzini, celle frigo) */
+.high-contrast[data-theme="dark"] {
+  --bg-app: #000000;
+  --bg-surface: #0a0a0a;
+  --bg-surface-elevated: #171717;
+  --border-subtle: #ffffff;
+  --border-strong: #ffffff;
+  --text-main: #ffffff;
+  --text-muted: #e5e5e5;
+  --color-primary: #60a5fa;
+  --input-border: #ffffff;
+}
+
+.high-contrast[data-theme="light"] {
+  --bg-app: #ffffff;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f0f0f0;
+  --border-subtle: #000000;
+  --border-strong: #000000;
+  --text-main: #000000;
+  --text-muted: #171717;
+  --color-primary: #0044cc;
+  --input-border: #000000;
+}

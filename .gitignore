@@ -1,0 +1,15 @@
+# Node / dependencies
+node_modules/
+npm-debug.log*
+
+# Logs & temp files
+*.log
+*.tmp
+out*.txt
+out*.html
+test_file_proto.html
+err.txt
+
+# OS metadata
+.DS_Store
+Thumbs.db

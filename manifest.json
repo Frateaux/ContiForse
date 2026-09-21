@@ -1,0 +1,20 @@
+{
+  "name": "ContiFor - Gestione Forniture & OCR Manoscritto",
+  "short_name": "ContiFor",
+  "description": "PWA ad alta sicurezza con OCR Gemini Vision, crittografia client-side AES-256 e dashboard selettiva",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0b0f19",
+  "theme_color": "#111827",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "./assets/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "finance", "productivity"],
+  "lang": "it-IT"
+}

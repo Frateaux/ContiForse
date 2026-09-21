@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="it" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="description" content="ContiFor - PWA Mobile-First ad alta sicurezza per gestione forniture, OCR appunti manoscritti con Gemini e crittografia client-side AES-256">
+  <meta name="theme-color" content="#111827">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ContiFor">
+
+  <title>ContiFor - Gestione Forniture & OCR Manoscritto</title>
+
+  <!-- PWA Manifest & Favicon -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="./assets/icon.svg">
+  <link rel="apple-touch-icon" href="./assets/icon.svg">
+
+  <!-- Stili modulari -->
+  <link rel="stylesheet" href="./css/themes.css">
+  <link rel="stylesheet" href="./css/main.css">
+  <link rel="stylesheet" href="./css/components.css">
+</head>
+<body>
+
+  <!-- Top App Header Fissa -->
+  <header class="top-app-header">
+    <div class="brand-container">
+      <div class="brand-logo">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+        </svg>
+      </div>
+      <div>
+        <span class="brand-title">ContiFor</span>
+        <span class="brand-badge">AES-256</span>
+      </div>
+    </div>
+    <div class="header-status">
+      <span class="badge badge-info" id="header-vault-status">🔒 Vault Attivo</span>
+    </div>
+  </header>
+
+  <!-- Contenitore Principale delle Viste Dinamiche -->
+  <main class="main-content" id="main-view-container">
+    <!-- Le viste SPA (Scan, Archive, Suppliers, Report, Settings) vengono montate qui da app.js -->
+  </main>
+
+  <!-- Bottom Navigation Bar Mobile-First per Smartphone -->
+  <nav class="bottom-nav">
+    <button type="button" class="bottom-nav-item active" data-tab="scan" aria-label="Nuova Scansione">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+        <circle cx="12" cy="13" r="4"></circle>
+      </svg>
+      <span>Scansione</span>
+    </button>
+
+    <button type="button" class="bottom-nav-item" data-tab="archive" aria-label="Archivio Storico">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+        <polyline points="10 9 9 9 8 9"></polyline>
+      </svg>
+      <span>Archivio</span>
+    </button>
+
+    <button type="button" class="bottom-nav-item" data-tab="suppliers" aria-label="Fornitori e Listini">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+      </svg>
+      <span>Fornitori</span>
+    </button>
+
+    <button type="button" class="bottom-nav-item" data-tab="report" aria-label="Dashboard e Report">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
+        <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
+      </svg>
+      <span>Report</span>
+    </button>
+
+    <button type="button" class="bottom-nav-item" data-tab="settings" aria-label="Impostazioni e Sicurezza">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+      <span>Setup</span>
+    </button>
+  </nav>
+
+  <!-- Overlay Modal di Sblocco / Autenticazione Master Password -->
+  <div id="auth-modal-overlay" class="modal-backdrop hidden"></div>
+
+  <!-- Pulizia automatica della cache del Service Worker se obsoleta -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      caches.keys().then(keys => {
+        keys.forEach(key => {
+          if (key !== 'contifor-shell-v3.8.4') {
+            caches.delete(key);
+          }
+        });
+      });
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        for (let registration of registrations) {
+          registration.update();
+        }
+      });
+    }
+  </script>
+
+  <!-- Script Standalone Universale (funziona sia con doppio click locale su file:// che su web server / GitHub Pages) -->
+  <script src="./bundle.js?v=3.8.4"></script>
+</body>
+</html>
