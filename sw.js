@@ -2,7 +2,7 @@
  * ContiFor - Service Worker per funzionamento Offline PWA
  */
 
-const CACHE_NAME = 'contifor-shell-v3.8.6';
+const CACHE_NAME = 'contifor-shell-v3.8.7';
 
 const APP_SHELL_FILES = [
   './',

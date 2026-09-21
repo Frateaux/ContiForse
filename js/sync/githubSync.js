@@ -163,4 +163,96 @@ export class GitHubSyncManager {
       updatedAt: data.updated_at
     };
   }
+
+  /**
+   * Cerca se sull'account GitHub dell'utente esiste già un Gist di ContiFor
+   */
+  static async findExistingContiForGist(token) {
+    if (!token || token.trim() === '') return null;
+
+    try {
+      const res = await fetch(`${this.API_BASE}/gists?per_page=100`, {
+        headers: {
+          'Authorization': `Bearer ${token.trim()}`,
+          'Accept': 'application/vnd.github+json'
+        }
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) throw new Error('Token GitHub non valido o scaduto.');
+        return null;
+      }
+
+      const gists = await res.json();
+      if (!Array.isArray(gists)) return null;
+
+      for (const g of gists) {
+        if (g.files && g.files[this.FILE_NAME]) {
+          return g.id;
+        }
+        if (g.description && g.description.includes('ContiFor Encrypted Vault')) {
+          return g.id;
+        }
+      }
+      return null;
+    } catch (err) {
+      console.warn('Controllo Gist esistenti:', err);
+      if (err.message && err.message.includes('scaduto')) throw err;
+      return null;
+    }
+  }
+
+  /**
+   * Push Intelligente: se l'ID del Gist non è presente, cerca un Gist ContiFor esistente;
+   * se non lo trova, crea automaticamente un nuovo Gist privato Zero-Knowledge.
+   */
+  static async smartPushVault(token, gistId, encryptedEnvelope) {
+    if (!token || token.trim() === '') throw new Error('Token GitHub mancante.');
+    if (!encryptedEnvelope) throw new Error('Dati cifrati del Vault mancanti.');
+
+    let targetGistId = (gistId || '').trim();
+
+    // Se manca il Gist ID, cerchiamo se esiste già sull'account
+    if (!targetGistId) {
+      targetGistId = await this.findExistingContiForGist(token);
+    }
+
+    if (targetGistId) {
+      try {
+        const res = await this.pushVault(token, targetGistId, encryptedEnvelope);
+        return res;
+      } catch (err) {
+        // Se il gistID era obsoleto o cancellato (404), prova a ricrearlo automaticamente
+        if (err.message && err.message.includes('404')) {
+          return await this.createPrivateGist(token, encryptedEnvelope);
+        }
+        throw err;
+      }
+    } else {
+      // Nessun Gist esistente: creane uno nuovo automaticamente
+      return await this.createPrivateGist(token, encryptedEnvelope);
+    }
+  }
+
+  /**
+   * Pull Intelligente: se l'ID del Gist non è fornito, cerca automaticamente sull'account
+   */
+  static async smartPullVault(token, gistId) {
+    if (!token || token.trim() === '') throw new Error('Token GitHub mancante.');
+
+    let targetGistId = (gistId || '').trim();
+    if (!targetGistId) {
+      targetGistId = await this.findExistingContiForGist(token);
+      if (!targetGistId) {
+        throw new Error('Nessun Gist ContiFor trovato sul tuo account GitHub. Effettua prima un invio (Push) dallo smartphone per creare il backup cifrato.');
+      }
+    }
+
+    const res = await this.pullVault(token, targetGistId);
+    return {
+      gistId: targetGistId,
+      envelope: res.envelope,
+      updatedAt: res.updatedAt
+    };
+  }
 }

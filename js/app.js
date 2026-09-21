@@ -69,23 +69,55 @@ class App {
 
     syncBtn.addEventListener('click', async () => {
       if (!store.isUnlocked) return;
-      const settings = store.getSettings();
-      const token = settings.githubToken;
-      const gistId = settings.githubGistId;
 
-      if (!token || !gistId) {
+      const domTokenInput = document.getElementById('setting-github-token');
+      const domGistInput = document.getElementById('setting-github-gist-id');
+
+      const token = (domTokenInput ? domTokenInput.value.trim() : '') || store.getSettings().githubToken;
+      const gistId = (domGistInput ? domGistInput.value.trim() : '') || store.getSettings().githubGistId;
+
+      if (!token) {
         Toast.info('Per sincronizzare i dati tra smartphone e PC, inserisci il tuo Token GitHub nelle Impostazioni.');
         this.switchTab('settings');
+        setTimeout(() => {
+          document.getElementById('setting-github-token')?.focus();
+        }, 150);
         return;
       }
+
+      // Salva preventivamente il token
+      await store.updateSettings({
+        githubToken: token,
+        ...(gistId ? { githubGistId: gistId } : {})
+      });
 
       syncBtn.disabled = true;
       syncBtn.textContent = '⏳ Sync...';
 
       try {
         const envelope = store.getEncryptedEnvelope();
-        const res = await GitHubSyncManager.pushVault(token, gistId, envelope);
-        await store.updateSettings({ lastCloudSyncDate: res.updatedAt });
+        if (!envelope) throw new Error('Nessun dato cifrato presente da sincronizzare.');
+
+        // smartPushVault crea o individua automaticamente il Gist se non impostato
+        const res = await GitHubSyncManager.smartPushVault(token, gistId, envelope);
+
+        await store.updateSettings({
+          githubToken: token,
+          githubGistId: res.gistId,
+          lastCloudSyncDate: res.updatedAt
+        });
+
+        // Se l'utente è sulla schermata impostazioni, aggiorna i campi a video senza ricaricare la pagina
+        if (domGistInput) domGistInput.value = res.gistId;
+        const statusRow = document.querySelector('.cloud-sync-status-row');
+        if (statusRow) {
+          statusRow.innerHTML = `
+            <span class="text-subtle">
+              Ultima sincronizzazione cloud: <strong>${new Date(res.updatedAt).toLocaleString('it-IT')}</strong>
+            </span>
+          `;
+        }
+
         Toast.success('Sincronizzazione Cloud completata con successo!');
       } catch (err) {
         Toast.error(`Errore sincronizzazione: ${err.message}`);

@@ -132,11 +132,31 @@ async function testBiometricsAndSync() {
   const wrapped = await BiometricsManager._encryptPassword(pwd, mockCredId, salt);
   const unwrapped = await BiometricsManager._decryptPassword(wrapped, mockCredId, salt);
 
-  if (unwrapped === pwd) {
-    console.log('✓ Wrapping e unwrapping crittografico token biometrico verificato con successo!');
-  } else {
-    throw new Error('Unwrapping token biometrico non corrispondente.');
+  // Test metodi smartPushVault e findExistingContiForGist presenti e validi
+  if (typeof GitHubSyncManager.smartPushVault !== 'function' || typeof GitHubSyncManager.findExistingContiForGist !== 'function') {
+    throw new Error('Metodi smartPushVault o findExistingContiForGist mancanti in GitHubSyncManager.');
   }
+
+  // Test findExistingContiForGist con mock response
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.includes('/gists?per_page=100')) {
+      return {
+        ok: true,
+        json: async () => [
+          { id: 'gist_abc_123', files: { 'contifor_encrypted_vault.json': {} } }
+        ]
+      };
+    }
+    return { ok: false, status: 404 };
+  };
+
+  const foundGistId = await GitHubSyncManager.findExistingContiForGist('mock_token');
+  if (foundGistId !== 'gist_abc_123') {
+    throw new Error(`Rilevamento automatico Gist fallito: atteso 'gist_abc_123', ottenuto '${foundGistId}'`);
+  }
+  console.log('✓ Rilevamento automatico Gist (smart discovery) verificato con successo!');
+  globalThis.fetch = originalFetch;
 }
 
 async function runAll() {

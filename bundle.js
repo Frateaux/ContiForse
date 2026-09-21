@@ -636,6 +636,98 @@ class GitHubSyncManager {
       updatedAt: data.updated_at
     };
   }
+
+  /**
+   * Cerca se sull'account GitHub dell'utente esiste già un Gist di ContiFor
+   */
+  static async findExistingContiForGist(token) {
+    if (!token || token.trim() === '') return null;
+
+    try {
+      const res = await fetch(`${this.API_BASE}/gists?per_page=100`, {
+        headers: {
+          'Authorization': `Bearer ${token.trim()}`,
+          'Accept': 'application/vnd.github+json'
+        }
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) throw new Error('Token GitHub non valido o scaduto.');
+        return null;
+      }
+
+      const gists = await res.json();
+      if (!Array.isArray(gists)) return null;
+
+      for (const g of gists) {
+        if (g.files && g.files[this.FILE_NAME]) {
+          return g.id;
+        }
+        if (g.description && g.description.includes('ContiFor Encrypted Vault')) {
+          return g.id;
+        }
+      }
+      return null;
+    } catch (err) {
+      console.warn('Controllo Gist esistenti:', err);
+      if (err.message && err.message.includes('scaduto')) throw err;
+      return null;
+    }
+  }
+
+  /**
+   * Push Intelligente: se l'ID del Gist non è presente, cerca un Gist ContiFor esistente;
+   * se non lo trova, crea automaticamente un nuovo Gist privato Zero-Knowledge.
+   */
+  static async smartPushVault(token, gistId, encryptedEnvelope) {
+    if (!token || token.trim() === '') throw new Error('Token GitHub mancante.');
+    if (!encryptedEnvelope) throw new Error('Dati cifrati del Vault mancanti.');
+
+    let targetGistId = (gistId || '').trim();
+
+    // Se manca il Gist ID, cerchiamo se esiste già sull'account
+    if (!targetGistId) {
+      targetGistId = await this.findExistingContiForGist(token);
+    }
+
+    if (targetGistId) {
+      try {
+        const res = await this.pushVault(token, targetGistId, encryptedEnvelope);
+        return res;
+      } catch (err) {
+        // Se il gistID era obsoleto o cancellato (404), prova a ricrearlo automaticamente
+        if (err.message && err.message.includes('404')) {
+          return await this.createPrivateGist(token, encryptedEnvelope);
+        }
+        throw err;
+      }
+    } else {
+      // Nessun Gist esistente: creane uno nuovo automaticamente
+      return await this.createPrivateGist(token, encryptedEnvelope);
+    }
+  }
+
+  /**
+   * Pull Intelligente: se l'ID del Gist non è fornito, cerca automaticamente sull'account
+   */
+  static async smartPullVault(token, gistId) {
+    if (!token || token.trim() === '') throw new Error('Token GitHub mancante.');
+
+    let targetGistId = (gistId || '').trim();
+    if (!targetGistId) {
+      targetGistId = await this.findExistingContiForGist(token);
+      if (!targetGistId) {
+        throw new Error('Nessun Gist ContiFor trovato sul tuo account GitHub. Effettua prima un invio (Push) dallo smartphone per creare il backup cifrato.');
+      }
+    }
+
+    const res = await this.pullVault(token, targetGistId);
+    return {
+      gistId: targetGistId,
+      envelope: res.envelope,
+      updatedAt: res.updatedAt
+    };
+  }
 }
 
 
@@ -4804,9 +4896,9 @@ class SettingsView {
             </div>
 
             <div class="form-group">
-              <label class="form-label" for="setting-github-gist-id">ID Gist Privato</label>
+              <label class="form-label" for="setting-github-gist-id">ID Gist Privato (Opzionale: rilevato o creato in automatico)</label>
               <input type="text" id="setting-github-gist-id" class="form-input" 
-                placeholder="Lascia vuoto per crearlo automaticamente con 1 click" value="${settings.githubGistId || ''}">
+                placeholder="Lascia vuoto: verrà creato o rilevato automaticamente" value="${settings.githubGistId || ''}">
             </div>
 
             <div class="cloud-sync-status-row mt-2">
@@ -5023,6 +5115,22 @@ class SettingsView {
     const tokenInput = this.container.querySelector('#setting-github-token');
     const gistInput = this.container.querySelector('#setting-github-gist-id');
     const toggleTokenBtn = this.container.querySelector('#btn-toggle-github-token');
+    const syncStatusRow = this.container.querySelector('.cloud-sync-status-row');
+
+    // Salvataggio immediato all'inserimento/modifica: previene la perdita del token digitato
+    const persistCloudInputs = () => {
+      const currentToken = tokenInput ? tokenInput.value.trim() : '';
+      const currentGist = gistInput ? gistInput.value.trim() : '';
+      store.updateSettings({
+        githubToken: currentToken,
+        githubGistId: currentGist
+      });
+    };
+
+    tokenInput?.addEventListener('input', persistCloudInputs);
+    gistInput?.addEventListener('input', persistCloudInputs);
+    tokenInput?.addEventListener('change', persistCloudInputs);
+    gistInput?.addEventListener('change', persistCloudInputs);
 
     if (toggleTokenBtn && tokenInput) {
       toggleTokenBtn.addEventListener('click', () => {
@@ -5036,6 +5144,17 @@ class SettingsView {
       });
     }
 
+    // Helper per aggiornare la riga di stato sync a video senza distruggere i campi input
+    const updateSyncStatusDisplay = (dateIso) => {
+      if (syncStatusRow) {
+        syncStatusRow.innerHTML = `
+          <span class="text-subtle">
+            Ultima sincronizzazione cloud: <strong>${new Date(dateIso).toLocaleString('it-IT')}</strong>
+          </span>
+        `;
+      }
+    };
+
     // Test Token GitHub
     const testTokenBtn = this.container.querySelector('#btn-test-github-token');
     if (testTokenBtn) {
@@ -5043,12 +5162,14 @@ class SettingsView {
         const token = tokenInput ? tokenInput.value.trim() : '';
         if (!token) {
           Toast.error('Inserisci prima il Token GitHub da verificare.');
+          tokenInput?.focus();
           return;
         }
         testTokenBtn.disabled = true;
         testTokenBtn.textContent = '⏳ Verifica...';
         try {
           const user = await GitHubSyncManager.testToken(token);
+          await store.updateSettings({ githubToken: token });
           Toast.success(`Token valido! Connesso all'account GitHub: @${user.login}`);
         } catch (err) {
           Toast.error(err.message);
@@ -5063,9 +5184,10 @@ class SettingsView {
     const createGistBtn = this.container.querySelector('#btn-create-gist');
     if (createGistBtn) {
       createGistBtn.addEventListener('click', async () => {
-        const token = tokenInput ? tokenInput.value.trim() : '';
+        const token = (tokenInput ? tokenInput.value.trim() : '') || store.getSettings().githubToken;
         if (!token) {
           Toast.error('Inserisci prima un Token GitHub valido.');
+          tokenInput?.focus();
           return;
         }
         createGistBtn.disabled = true;
@@ -5080,8 +5202,8 @@ class SettingsView {
             githubGistId: res.gistId,
             lastCloudSyncDate: res.updatedAt
           });
+          updateSyncStatusDisplay(res.updatedAt);
           Toast.success(`Cloud privato creato con successo! Gist ID: ${res.gistId}`);
-          this.render();
         } catch (err) {
           Toast.error(`Errore creazione Gist: ${err.message}`);
         } finally {
@@ -5095,25 +5217,32 @@ class SettingsView {
     const pushBtn = this.container.querySelector('#btn-push-vault');
     if (pushBtn) {
       pushBtn.addEventListener('click', async () => {
-        const token = tokenInput ? tokenInput.value.trim() : '';
-        const gistId = gistInput ? gistInput.value.trim() : '';
-        if (!token || !gistId) {
-          Toast.error('Inserisci sia il Token GitHub che l\'ID del Gist per sincronizzare.');
+        const token = (tokenInput ? tokenInput.value.trim() : '') || store.getSettings().githubToken;
+        const gistId = (gistInput ? gistInput.value.trim() : '') || store.getSettings().githubGistId;
+        
+        if (!token) {
+          Toast.error('Inserisci il Token GitHub per sincronizzare i dati.');
+          tokenInput?.focus();
           return;
         }
+
         pushBtn.disabled = true;
-        pushBtn.textContent = '⏳ Caricamento...';
+        pushBtn.textContent = '⏳ Sincronizzazione...';
         try {
           const envelope = store.getEncryptedEnvelope();
           if (!envelope) throw new Error('Nessun dato cifrato presente.');
-          const res = await GitHubSyncManager.pushVault(token, gistId, envelope);
+          
+          // smartPushVault cerca o crea automaticamente il Gist se non specificato
+          const res = await GitHubSyncManager.smartPushVault(token, gistId, envelope);
+          
+          if (gistInput) gistInput.value = res.gistId;
           await store.updateSettings({
             githubToken: token,
-            githubGistId: gistId,
+            githubGistId: res.gistId,
             lastCloudSyncDate: res.updatedAt
           });
+          updateSyncStatusDisplay(res.updatedAt);
           Toast.success('Vault cifrato caricato con successo sul Cloud GitHub!');
-          this.render();
         } catch (err) {
           Toast.error(`Errore Push Cloud: ${err.message}`);
         } finally {
@@ -5127,16 +5256,19 @@ class SettingsView {
     const pullBtn = this.container.querySelector('#btn-pull-vault');
     if (pullBtn) {
       pullBtn.addEventListener('click', async () => {
-        const token = tokenInput ? tokenInput.value.trim() : '';
-        const gistId = gistInput ? gistInput.value.trim() : '';
-        if (!token || !gistId) {
-          Toast.error('Inserisci sia il Token GitHub che l\'ID del Gist per scaricare.');
+        const token = (tokenInput ? tokenInput.value.trim() : '') || store.getSettings().githubToken;
+        const gistId = (gistInput ? gistInput.value.trim() : '') || store.getSettings().githubGistId;
+
+        if (!token) {
+          Toast.error('Inserisci il Token GitHub per scaricare i dati.');
+          tokenInput?.focus();
           return;
         }
+
         pullBtn.disabled = true;
         pullBtn.textContent = '⏳ Download...';
         try {
-          const { envelope, updatedAt } = await GitHubSyncManager.pullVault(token, gistId);
+          const { gistId: foundGistId, envelope, updatedAt } = await GitHubSyncManager.smartPullVault(token, gistId);
           const password = store.sessionPassword || prompt('Inserisci la Master Password per decifrare il Vault scaricato dal Cloud:');
           if (!password) {
             pullBtn.disabled = false;
@@ -5144,13 +5276,16 @@ class SettingsView {
             return;
           }
           await store.applyRemoteEncryptedEnvelope(envelope, password);
+          if (gistInput) gistInput.value = foundGistId;
           await store.updateSettings({
             githubToken: token,
-            githubGistId: gistId,
+            githubGistId: foundGistId,
             lastCloudSyncDate: updatedAt
           });
           Toast.success('Dati scaricati dal Cloud e decifrati con successo!');
-          window.location.reload();
+          setTimeout(() => {
+            window.location.reload();
+          }, 600);
         } catch (err) {
           Toast.error(`Errore Pull Cloud: ${err.message}`);
           pullBtn.disabled = false;
@@ -5178,6 +5313,13 @@ class SettingsView {
     const toggleKeyBtn = this.container.querySelector('#btn-toggle-key-visibility');
     const keyInput = this.container.querySelector('#setting-gemini-key');
     if (toggleKeyBtn && keyInput) {
+      keyInput.addEventListener('input', () => {
+        store.updateSettings({ geminiApiKey: keyInput.value.trim() });
+      });
+      keyInput.addEventListener('change', () => {
+        store.updateSettings({ geminiApiKey: keyInput.value.trim() });
+      });
+
       toggleKeyBtn.addEventListener('click', () => {
         if (keyInput.type === 'password') {
           keyInput.type = 'text';
@@ -5398,23 +5540,55 @@ class App {
 
     syncBtn.addEventListener('click', async () => {
       if (!store.isUnlocked) return;
-      const settings = store.getSettings();
-      const token = settings.githubToken;
-      const gistId = settings.githubGistId;
 
-      if (!token || !gistId) {
+      const domTokenInput = document.getElementById('setting-github-token');
+      const domGistInput = document.getElementById('setting-github-gist-id');
+
+      const token = (domTokenInput ? domTokenInput.value.trim() : '') || store.getSettings().githubToken;
+      const gistId = (domGistInput ? domGistInput.value.trim() : '') || store.getSettings().githubGistId;
+
+      if (!token) {
         Toast.info('Per sincronizzare i dati tra smartphone e PC, inserisci il tuo Token GitHub nelle Impostazioni.');
         this.switchTab('settings');
+        setTimeout(() => {
+          document.getElementById('setting-github-token')?.focus();
+        }, 150);
         return;
       }
+
+      // Salva preventivamente il token
+      await store.updateSettings({
+        githubToken: token,
+        ...(gistId ? { githubGistId: gistId } : {})
+      });
 
       syncBtn.disabled = true;
       syncBtn.textContent = '⏳ Sync...';
 
       try {
         const envelope = store.getEncryptedEnvelope();
-        const res = await GitHubSyncManager.pushVault(token, gistId, envelope);
-        await store.updateSettings({ lastCloudSyncDate: res.updatedAt });
+        if (!envelope) throw new Error('Nessun dato cifrato presente da sincronizzare.');
+
+        // smartPushVault crea o individua automaticamente il Gist se non impostato
+        const res = await GitHubSyncManager.smartPushVault(token, gistId, envelope);
+
+        await store.updateSettings({
+          githubToken: token,
+          githubGistId: res.gistId,
+          lastCloudSyncDate: res.updatedAt
+        });
+
+        // Se l'utente è sulla schermata impostazioni, aggiorna i campi a video senza ricaricare la pagina
+        if (domGistInput) domGistInput.value = res.gistId;
+        const statusRow = document.querySelector('.cloud-sync-status-row');
+        if (statusRow) {
+          statusRow.innerHTML = `
+            <span class="text-subtle">
+              Ultima sincronizzazione cloud: <strong>${new Date(res.updatedAt).toLocaleString('it-IT')}</strong>
+            </span>
+          `;
+        }
+
         Toast.success('Sincronizzazione Cloud completata con successo!');
       } catch (err) {
         Toast.error(`Errore sincronizzazione: ${err.message}`);
