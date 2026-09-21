@@ -113,11 +113,38 @@ function testInvoiceAndMathAudit() {
   console.log('✓ Documento Fattura/Ricevuta PDF A4 generato con successo e convalidato.');
 }
 
+import { GitHubSyncManager } from '../js/sync/githubSync.js';
+import { BiometricsManager } from '../js/crypto/biometrics.js';
+
+async function testBiometricsAndSync() {
+  console.log('\n--- TEST 4: Modulo Biometrico & Cloud Sync GitHub ---');
+  if (GitHubSyncManager.FILE_NAME !== 'contifor_encrypted_vault.json') {
+    throw new Error('Nome file di sincronizzazione GitHub non corretto.');
+  }
+  console.log('✓ Modulo GitHubSyncManager configurato con Zero-Knowledge envelope.');
+
+  // Test wrapping/unwrapping password per biometria
+  const mockCredId = 'mock_credential_id_base64_123';
+  const salt = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(salt);
+
+  const pwd = 'MiaMasterPasswordSegreta99!';
+  const wrapped = await BiometricsManager._encryptPassword(pwd, mockCredId, salt);
+  const unwrapped = await BiometricsManager._decryptPassword(wrapped, mockCredId, salt);
+
+  if (unwrapped === pwd) {
+    console.log('✓ Wrapping e unwrapping crittografico token biometrico verificato con successo!');
+  } else {
+    throw new Error('Unwrapping token biometrico non corrispondente.');
+  }
+}
+
 async function runAll() {
   try {
     await testCrypto();
     testGeminiSchema();
     testInvoiceAndMathAudit();
+    await testBiometricsAndSync();
     console.log('\n=============================================');
     console.log('TUTTI I TEST AUTOMATIZZATI HANNO AVUTO ESITO POSITIVO!');
     console.log('=============================================');

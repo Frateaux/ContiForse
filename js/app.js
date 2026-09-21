@@ -11,6 +11,8 @@ import { ArchiveView } from './views/archiveView.js';
 import { SuppliersView } from './views/suppliersView.js';
 import { ReportView } from './views/reportView.js';
 import { SettingsView } from './views/settingsView.js';
+import { GitHubSyncManager } from './sync/githubSync.js';
+import { Toast } from './ui/toast.js';
 
 class App {
   constructor() {
@@ -36,6 +38,7 @@ class App {
     };
 
     this.bindNavigation();
+    this.bindHeaderSync();
     this.bindStoreEvents();
     this.registerServiceWorker();
 
@@ -57,6 +60,39 @@ class App {
           this.switchTab(tab);
         }
       });
+    });
+  }
+
+  bindHeaderSync() {
+    const syncBtn = document.getElementById('btn-header-cloud-sync');
+    if (!syncBtn) return;
+
+    syncBtn.addEventListener('click', async () => {
+      if (!store.isUnlocked) return;
+      const settings = store.getSettings();
+      const token = settings.githubToken;
+      const gistId = settings.githubGistId;
+
+      if (!token || !gistId) {
+        Toast.info('Per sincronizzare i dati tra smartphone e PC, inserisci il tuo Token GitHub nelle Impostazioni.');
+        this.switchTab('settings');
+        return;
+      }
+
+      syncBtn.disabled = true;
+      syncBtn.textContent = '⏳ Sync...';
+
+      try {
+        const envelope = store.getEncryptedEnvelope();
+        const res = await GitHubSyncManager.pushVault(token, gistId, envelope);
+        await store.updateSettings({ lastCloudSyncDate: res.updatedAt });
+        Toast.success('Sincronizzazione Cloud completata con successo!');
+      } catch (err) {
+        Toast.error(`Errore sincronizzazione: ${err.message}`);
+      } finally {
+        syncBtn.disabled = false;
+        syncBtn.textContent = '☁️ Sync';
+      }
     });
   }
 

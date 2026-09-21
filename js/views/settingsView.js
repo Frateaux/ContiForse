@@ -1,36 +1,134 @@
 /**
  * ContiFor - Settings View
  * 
- * Gestione Gemini API Key, Backup Cifrato, Master Password, Aspetto e Blocco Vault
+ * Gestione Gemini API Key, Accesso Biometrico (WebAuthn), Sincronizzazione Cloud Cifrata (GitHub Gist),
+ * Backup Cifrato, Master Password, Aspetto e Blocco Vault
  */
 
 import { store } from '../store/state.js';
 import { CryptoVault } from '../crypto/vault.js';
 import { Toast } from '../ui/toast.js';
 import { GeminiOCRClient } from '../gemini/geminiClient.js';
+import { BiometricsManager } from '../crypto/biometrics.js';
+import { GitHubSyncManager } from '../sync/githubSync.js';
 
 export class SettingsView {
   constructor(container) {
     this.container = container;
   }
 
-  render() {
+  async render() {
     const settings = store.getSettings();
+    const isBioAvailable = await BiometricsManager.isAvailable();
+    const isBioEnrolled = BiometricsManager.isEnrolled();
 
     this.container.innerHTML = `
       <div class="view-header">
         <div>
           <h1 class="view-title">Impostazioni & Sicurezza</h1>
-          <p class="view-subtitle">Configurazione crittografica, Gemini API e backup del vault</p>
+          <p class="view-subtitle">Crittografia, Accesso Biometrico, Cloud GitHub e Gemini API</p>
         </div>
       </div>
 
       <div class="settings-container">
-        <!-- Scheda 1: Chiave API Google AI Studio -->
+        <!-- Scheda 1: Accesso Biometrico (Impronta / Face ID / Windows Hello) -->
+        <div class="card settings-card">
+          <div class="card-header-clean">
+            <h3 class="card-title">👆 Accesso Biometrico (Impronta / Face ID)</h3>
+            <p class="card-subtitle">Accedi all'app all'istante usando l'impronta digitale o il riconoscimento facciale del tuo smartphone o computer.</p>
+          </div>
+
+          <div class="biometrics-settings-content mt-3">
+            ${!isBioAvailable ? `
+              <div class="alert-box alert-warning">
+                ⚠️ Il sensore biometrico (impronta digitale o Face ID) non risulta disponibile su questo browser o dispositivo.
+              </div>
+            ` : isBioEnrolled ? `
+              <div class="d-flex items-center justify-between flex-wrap gap-2">
+                <div class="biometrics-status-badge">
+                  <span class="badge badge-success">✓ Biometria Attiva su questo dispositivo</span>
+                  <small class="d-block text-subtle mt-1">Puoi sbloccare ContiFor con la tua impronta digitale o Face ID.</small>
+                </div>
+                <button type="button" id="btn-disable-biometrics" class="btn btn-outline btn-sm">
+                  Disabilita Biometria
+                </button>
+              </div>
+            ` : `
+              <div>
+                <p class="text-subtle">Il tuo dispositivo supporta lo sblocco biometrico sicuro (WebAuthn / Passkeys).</p>
+                <button type="button" id="btn-enable-biometrics" class="btn btn-primary mt-2">
+                  👆 Abilita Impronta / Face ID su questo dispositivo
+                </button>
+              </div>
+            `}
+          </div>
+        </div>
+
+        <!-- Scheda 2: Sincronizzazione Cloud Cifrata Zero-Knowledge (GitHub Gist) -->
+        <div class="card settings-card">
+          <div class="card-header-clean">
+            <h3 class="card-title">☁️ Sincronizzazione Cloud Cifrata (Smartphone ⇄ Desktop)</h3>
+            <p class="card-subtitle">
+              Sincronizza le bolle e i prezzi tra telefono e PC. I dati vengono cifrati con AES-256 prima dell'invio: 
+              <strong>nemmeno GitHub può leggere i tuoi dati</strong> (Zero-Knowledge).
+            </p>
+          </div>
+
+          <form id="form-github-sync" class="mt-3">
+            <div class="form-group">
+              <label class="form-label" for="setting-github-token">GitHub Personal Access Token (PAT) *</label>
+              <div class="input-with-button">
+                <input type="password" id="setting-github-token" class="form-input" 
+                  placeholder="ghp_..." value="${settings.githubToken || ''}">
+                <button type="button" id="btn-toggle-github-token" class="btn btn-secondary btn-sm">Mostra</button>
+              </div>
+              <small class="text-subtle mt-1 d-block">
+                Token gratuito con solo il permesso <code>gist</code>. Generabile su 
+                <a href="https://github.com/settings/tokens/new?scopes=gist&description=ContiFor_Encrypted_Vault" target="_blank" rel="noopener noreferrer" class="text-primary font-weight-bold">
+                  GitHub > Developer Settings > Tokens (Classic) ↗
+                </a>
+              </small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="setting-github-gist-id">ID Gist Privato</label>
+              <input type="text" id="setting-github-gist-id" class="form-input" 
+                placeholder="Lascia vuoto per crearlo automaticamente con 1 click" value="${settings.githubGistId || ''}">
+            </div>
+
+            <div class="cloud-sync-status-row mt-2">
+              <span class="text-subtle">
+                ${settings.lastCloudSyncDate 
+                  ? `Ultima sincronizzazione cloud: <strong>${new Date(settings.lastCloudSyncDate).toLocaleString('it-IT')}</strong>` 
+                  : 'Nessuna sincronizzazione cloud effettuata.'}
+              </span>
+            </div>
+
+            <div class="d-flex gap-2 flex-wrap mt-3">
+              <button type="button" id="btn-test-github-token" class="btn btn-outline">
+                ⚡ Verifica Token
+              </button>
+              <button type="button" id="btn-create-gist" class="btn btn-secondary">
+                🚀 Crea Gist Privato Automatico
+              </button>
+              <button type="button" id="btn-push-vault" class="btn btn-primary">
+                ☁️ Invia al Cloud (Push)
+              </button>
+              <button type="button" id="btn-pull-vault" class="btn btn-outline">
+                📥 Scarica dal Cloud (Pull)
+              </button>
+              <button type="submit" class="btn btn-subtle">
+                💾 Salva Configurazione Cloud
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Scheda 3: Chiave API Google AI Studio -->
         <div class="card settings-card">
           <div class="card-header-clean">
             <h3 class="card-title">🔑 Chiave API Google AI Studio</h3>
-            <p class="card-subtitle">Inserisci la tua chiave generata su Google AI Studio per l'analisi OCR dei manoscritti con Gemini Flash. La chiave viene cifrata con AES-256 nel tuo vault locale.</p>
+            <p class="card-subtitle">Inserisci la chiave generata su Google AI Studio per l'analisi OCR dei manoscritti con Gemini Flash.</p>
           </div>
 
           <form id="form-gemini-settings" class="mt-3">
@@ -65,11 +163,11 @@ export class SettingsView {
           </form>
         </div>
 
-        <!-- Scheda 2: Backup e Ripristino Cifrato (Zero-Cloud) -->
+        <!-- Scheda 4: Backup e Ripristino Cifrato Locale (.json) -->
         <div class="card settings-card">
           <div class="card-header-clean">
-            <h3 class="card-title">🛡️ Backup Cifrato (.json)</h3>
-            <p class="card-subtitle">Esporta una copia crittografata con AES-256 dei tuoi listini e archivio per conservarla su pendrive o migrare dispositivo.</p>
+            <h3 class="card-title">🛡️ Backup Locale Cifrato (.json)</h3>
+            <p class="card-subtitle">Esporta una copia crittografata con AES-256 dei tuoi listini e archivio per conservarla su pendrive o archivio locale.</p>
           </div>
 
           <div class="backup-actions-grid mt-3">
@@ -93,7 +191,7 @@ export class SettingsView {
           </div>
         </div>
 
-        <!-- Scheda 3: Gestione Master Password -->
+        <!-- Scheda 5: Gestione Master Password -->
         <div class="card settings-card">
           <div class="card-header-clean">
             <h3 class="card-title">🔐 Modifica Master Password</h3>
@@ -121,7 +219,7 @@ export class SettingsView {
           </form>
         </div>
 
-        <!-- Scheda 4: Aspetto & Accessibilità Mobile -->
+        <!-- Scheda 6: Aspetto & Accessibilità Mobile -->
         <div class="card settings-card">
           <div class="card-header-clean">
             <h3 class="card-title">🎨 Aspetto & Contrasto</h3>
@@ -157,7 +255,7 @@ export class SettingsView {
           </div>
         </div>
 
-        <!-- Scheda 5: Chiusura Sessione Sicura -->
+        <!-- Scheda 7: Chiusura Sessione Sicura -->
         <div class="card settings-card card-danger-border">
           <div class="card-header-clean">
             <h3 class="card-title text-danger">🔒 Blocco Immediato Sessione</h3>
@@ -174,7 +272,196 @@ export class SettingsView {
   }
 
   bindEvents() {
-    // Visibilità Chiave API
+    // --- GESTIONE BIOMETRIA ---
+    const enableBioBtn = this.container.querySelector('#btn-enable-biometrics');
+    if (enableBioBtn) {
+      enableBioBtn.addEventListener('click', async () => {
+        try {
+          enableBioBtn.disabled = true;
+          enableBioBtn.textContent = '⏳ Rilevamento impronta/volto in corso...';
+          const sessionPwd = store.sessionPassword;
+          if (!sessionPwd) {
+            Toast.error('Sessione non sbloccata. Riapri l\'app per abilitare la biometria.');
+            return;
+          }
+          await BiometricsManager.registerBiometrics(sessionPwd);
+          await store.updateSettings({ biometricsEnabled: true });
+          Toast.success('Accesso biometrico registrato con successo sul dispositivo!');
+          this.render();
+        } catch (err) {
+          Toast.error(`Impossibile registrare la biometria: ${err.message}`);
+          enableBioBtn.disabled = false;
+          enableBioBtn.textContent = '👆 Abilita Impronta / Face ID su questo dispositivo';
+        }
+      });
+    }
+
+    const disableBioBtn = this.container.querySelector('#btn-disable-biometrics');
+    if (disableBioBtn) {
+      disableBioBtn.addEventListener('click', async () => {
+        BiometricsManager.disableBiometrics();
+        await store.updateSettings({ biometricsEnabled: false });
+        Toast.info('Biometria disabilitata su questo dispositivo.');
+        this.render();
+      });
+    }
+
+    // --- GESTIONE SINCRONIZZAZIONE CLOUD GITHUB ---
+    const tokenInput = this.container.querySelector('#setting-github-token');
+    const gistInput = this.container.querySelector('#setting-github-gist-id');
+    const toggleTokenBtn = this.container.querySelector('#btn-toggle-github-token');
+
+    if (toggleTokenBtn && tokenInput) {
+      toggleTokenBtn.addEventListener('click', () => {
+        if (tokenInput.type === 'password') {
+          tokenInput.type = 'text';
+          toggleTokenBtn.textContent = 'Nascondi';
+        } else {
+          tokenInput.type = 'password';
+          toggleTokenBtn.textContent = 'Mostra';
+        }
+      });
+    }
+
+    // Test Token GitHub
+    const testTokenBtn = this.container.querySelector('#btn-test-github-token');
+    if (testTokenBtn) {
+      testTokenBtn.addEventListener('click', async () => {
+        const token = tokenInput ? tokenInput.value.trim() : '';
+        if (!token) {
+          Toast.error('Inserisci prima il Token GitHub da verificare.');
+          return;
+        }
+        testTokenBtn.disabled = true;
+        testTokenBtn.textContent = '⏳ Verifica...';
+        try {
+          const user = await GitHubSyncManager.testToken(token);
+          Toast.success(`Token valido! Connesso all'account GitHub: @${user.login}`);
+        } catch (err) {
+          Toast.error(err.message);
+        } finally {
+          testTokenBtn.disabled = false;
+          testTokenBtn.textContent = '⚡ Verifica Token';
+        }
+      });
+    }
+
+    // Crea Gist Privato Automatico
+    const createGistBtn = this.container.querySelector('#btn-create-gist');
+    if (createGistBtn) {
+      createGistBtn.addEventListener('click', async () => {
+        const token = tokenInput ? tokenInput.value.trim() : '';
+        if (!token) {
+          Toast.error('Inserisci prima un Token GitHub valido.');
+          return;
+        }
+        createGistBtn.disabled = true;
+        createGistBtn.textContent = '⏳ Creazione Gist...';
+        try {
+          const envelope = store.getEncryptedEnvelope();
+          if (!envelope) throw new Error('Nessun dato cifrato presente da caricare.');
+          const res = await GitHubSyncManager.createPrivateGist(token, envelope);
+          if (gistInput) gistInput.value = res.gistId;
+          await store.updateSettings({
+            githubToken: token,
+            githubGistId: res.gistId,
+            lastCloudSyncDate: res.updatedAt
+          });
+          Toast.success(`Cloud privato creato con successo! Gist ID: ${res.gistId}`);
+          this.render();
+        } catch (err) {
+          Toast.error(`Errore creazione Gist: ${err.message}`);
+        } finally {
+          createGistBtn.disabled = false;
+          createGistBtn.textContent = '🚀 Crea Gist Privato Automatico';
+        }
+      });
+    }
+
+    // Invia al Cloud (Push)
+    const pushBtn = this.container.querySelector('#btn-push-vault');
+    if (pushBtn) {
+      pushBtn.addEventListener('click', async () => {
+        const token = tokenInput ? tokenInput.value.trim() : '';
+        const gistId = gistInput ? gistInput.value.trim() : '';
+        if (!token || !gistId) {
+          Toast.error('Inserisci sia il Token GitHub che l\'ID del Gist per sincronizzare.');
+          return;
+        }
+        pushBtn.disabled = true;
+        pushBtn.textContent = '⏳ Caricamento...';
+        try {
+          const envelope = store.getEncryptedEnvelope();
+          if (!envelope) throw new Error('Nessun dato cifrato presente.');
+          const res = await GitHubSyncManager.pushVault(token, gistId, envelope);
+          await store.updateSettings({
+            githubToken: token,
+            githubGistId: gistId,
+            lastCloudSyncDate: res.updatedAt
+          });
+          Toast.success('Vault cifrato caricato con successo sul Cloud GitHub!');
+          this.render();
+        } catch (err) {
+          Toast.error(`Errore Push Cloud: ${err.message}`);
+        } finally {
+          pushBtn.disabled = false;
+          pushBtn.textContent = '☁️ Invia al Cloud (Push)';
+        }
+      });
+    }
+
+    // Scarica dal Cloud (Pull)
+    const pullBtn = this.container.querySelector('#btn-pull-vault');
+    if (pullBtn) {
+      pullBtn.addEventListener('click', async () => {
+        const token = tokenInput ? tokenInput.value.trim() : '';
+        const gistId = gistInput ? gistInput.value.trim() : '';
+        if (!token || !gistId) {
+          Toast.error('Inserisci sia il Token GitHub che l\'ID del Gist per scaricare.');
+          return;
+        }
+        pullBtn.disabled = true;
+        pullBtn.textContent = '⏳ Download...';
+        try {
+          const { envelope, updatedAt } = await GitHubSyncManager.pullVault(token, gistId);
+          const password = store.sessionPassword || prompt('Inserisci la Master Password per decifrare il Vault scaricato dal Cloud:');
+          if (!password) {
+            pullBtn.disabled = false;
+            pullBtn.textContent = '📥 Scarica dal Cloud (Pull)';
+            return;
+          }
+          await store.applyRemoteEncryptedEnvelope(envelope, password);
+          await store.updateSettings({
+            githubToken: token,
+            githubGistId: gistId,
+            lastCloudSyncDate: updatedAt
+          });
+          Toast.success('Dati scaricati dal Cloud e decifrati con successo!');
+          window.location.reload();
+        } catch (err) {
+          Toast.error(`Errore Pull Cloud: ${err.message}`);
+          pullBtn.disabled = false;
+          pullBtn.textContent = '📥 Scarica dal Cloud (Pull)';
+        }
+      });
+    }
+
+    // Form Salva Impostazioni Cloud
+    const githubForm = this.container.querySelector('#form-github-sync');
+    if (githubForm) {
+      githubForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const token = tokenInput ? tokenInput.value.trim() : '';
+        const gistId = gistInput ? gistInput.value.trim() : '';
+        await store.updateSettings({
+          githubToken: token,
+          githubGistId: gistId
+        });
+        Toast.success('Parametri di sincronizzazione Cloud salvati nel Vault!');
+      });
+    }
+
+    // --- CHIAVE GEMINI ---
     const toggleKeyBtn = this.container.querySelector('#btn-toggle-key-visibility');
     const keyInput = this.container.querySelector('#setting-gemini-key');
     if (toggleKeyBtn && keyInput) {
@@ -189,7 +476,6 @@ export class SettingsView {
       });
     }
 
-    // Test Connessione Google AI Studio
     const testKeyBtn = this.container.querySelector('#btn-test-gemini-key');
     if (testKeyBtn) {
       testKeyBtn.addEventListener('click', async () => {
@@ -217,7 +503,6 @@ export class SettingsView {
       });
     }
 
-    // Salva Chiave e Modello nel Vault Cifrato
     const geminiForm = this.container.querySelector('#form-gemini-settings');
     if (geminiForm) {
       geminiForm.addEventListener('submit', async (e) => {

@@ -27,7 +27,11 @@ export class AppStore {
         geminiModel: 'gemini-3.8-flash',
         theme: 'dark',
         highContrast: false,
-        lastBackupDate: null
+        lastBackupDate: null,
+        githubToken: '',
+        githubGistId: '',
+        lastCloudSyncDate: null,
+        biometricsEnabled: false
       }
     };
   }
@@ -124,7 +128,11 @@ export class AppStore {
         geminiModel: currentModel,
         theme: decrypted.settings?.theme || 'dark',
         highContrast: Boolean(decrypted.settings?.highContrast),
-        lastBackupDate: decrypted.settings?.lastBackupDate || null
+        lastBackupDate: decrypted.settings?.lastBackupDate || null,
+        githubToken: decrypted.settings?.githubToken || '',
+        githubGistId: decrypted.settings?.githubGistId || '',
+        lastCloudSyncDate: decrypted.settings?.lastCloudSyncDate || null,
+        biometricsEnabled: Boolean(decrypted.settings?.biometricsEnabled)
       }
     };
 
@@ -208,6 +216,31 @@ export class AppStore {
     this.isUnlocked = true;
     this.notify('VAULT_UNLOCKED');
     this.notify('BACKUP_RESTORED');
+    return true;
+  }
+
+  /**
+   * Recupera il pacchetto cifrato corrente da localStorage
+   */
+  getEncryptedEnvelope() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  /**
+   * Applica una versione del Vault scaricata dal Cloud GitHub
+   */
+  async applyRemoteEncryptedEnvelope(envelope, password) {
+    const decrypted = await CryptoVault.decryptData(envelope, password);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(envelope));
+    this.sessionPassword = password;
+    this.data = decrypted;
+    if (!this.data.settings) this.data.settings = {};
+    this.data.settings.lastCloudSyncDate = new Date().toISOString();
+    this.isUnlocked = true;
+    await this.saveToStorage();
+    this.notify('VAULT_UNLOCKED');
+    this.notify('CLOUD_SYNC_COMPLETED');
     return true;
   }
 

@@ -7,6 +7,7 @@
 import { store } from '../store/state.js';
 import { CryptoVault } from '../crypto/vault.js';
 import { Toast } from '../ui/toast.js';
+import { BiometricsManager } from '../crypto/biometrics.js';
 
 export class AuthModal {
   constructor(overlayElement) {
@@ -15,6 +16,7 @@ export class AuthModal {
 
   show() {
     const isInitialized = store.isVaultInitialized();
+    const hasBiometrics = isInitialized && BiometricsManager.isEnrolled();
 
     this.overlay.innerHTML = `
       <div class="auth-card card animate-scale-up">
@@ -33,7 +35,19 @@ export class AuthModal {
           </p>
         </div>
 
-        <form id="auth-form" class="auth-form">
+        ${hasBiometrics ? `
+          <div class="biometric-unlock-banner mb-3">
+            <button type="button" id="btn-biometric-unlock" class="btn btn-secondary btn-block btn-lg">
+              <span style="font-size: 1.3rem;">👆</span>
+              <strong>Sblocca con Impronta / Face ID</strong>
+            </button>
+            <div class="auth-divider-line mt-3 text-center">
+              <small class="text-subtle">oppure inserisci la Master Password:</small>
+            </div>
+          </div>
+        ` : ''}
+
+        <form id="auth-form" class="auth-form mt-2">
           <div class="form-group">
             <label class="form-label" for="auth-password">Master Password *</label>
             <input type="password" id="auth-password" class="form-input" required minlength="4" placeholder="Inserisci password di sblocco" autofocus autocomplete="current-password">
@@ -77,18 +91,47 @@ export class AuthModal {
     `;
 
     this.overlay.classList.remove('hidden');
-    this.bindEvents(isInitialized);
+    this.bindEvents(isInitialized, hasBiometrics);
   }
 
   hide() {
     this.overlay.classList.add('hidden');
   }
 
-  bindEvents(isInitialized) {
+  bindEvents(isInitialized, hasBiometrics) {
     const form = this.overlay.querySelector('#auth-form');
     const pwdInput = this.overlay.querySelector('#auth-password');
     const confirmInput = this.overlay.querySelector('#auth-confirm-password');
     const seedCheck = this.overlay.querySelector('#auth-seed-demo');
+
+    if (hasBiometrics) {
+      const bioBtn = this.overlay.querySelector('#btn-biometric-unlock');
+      const triggerBiometrics = async () => {
+        try {
+          const masterPassword = await BiometricsManager.authenticateBiometrics();
+          if (masterPassword) {
+            await store.unlockVault(masterPassword);
+            Toast.success('Vault sbloccato con successo tramite biometria!');
+            this.hide();
+          }
+        } catch (err) {
+          console.warn('Verifica biometrica annullata o fallita:', err);
+          Toast.warning('Accesso biometrico non riuscito o annullato. Inserisci la Master Password.');
+          if (pwdInput) pwdInput.focus();
+        }
+      };
+
+      if (bioBtn) {
+        bioBtn.addEventListener('click', triggerBiometrics);
+      }
+
+      // Prompt automatico discreto all'avvio dopo 350ms
+      setTimeout(() => {
+        if (!store.isUnlocked && !this.overlay.classList.contains('hidden')) {
+          triggerBiometrics();
+        }
+      }, 350);
+    }
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();

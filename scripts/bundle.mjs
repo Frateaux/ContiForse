@@ -4,6 +4,8 @@ import path from 'path';
 const files = [
   'js/config.js',
   'js/crypto/vault.js',
+  'js/crypto/biometrics.js',
+  'js/sync/githubSync.js',
   'js/ui/toast.js',
   'js/ui/charts.js',
   'js/ui/invoiceGenerator.js',
