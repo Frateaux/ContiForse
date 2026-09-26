@@ -12,6 +12,7 @@ const files = [
   'js/ui/invoiceGenerator.js',
   'js/store/state.js',
   'js/gemini/geminiClient.js',
+  'js/ocr/localOcrEngine.js',
   'js/views/authModal.js',
   'js/views/scanView.js',
   'js/views/archiveView.js',

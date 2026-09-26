@@ -1004,7 +1004,7 @@
    ========================================================================== */
 .scan-mode-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
   margin-bottom: 8px;
 }
@@ -1041,6 +1041,107 @@
 .scan-mode-btn.active small {
   color: var(--text-main);
   opacity: 0.85;
+}
+
+/* SELETTORE MOTORE OCR STANDALONE VS GEMINI */
+.ocr-engine-selector {
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ocr-engine-options {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ocr-engine-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.ocr-engine-radio-label input[type="radio"] {
+  cursor: pointer;
+  accent-color: var(--color-primary);
+}
+
+/* INSERIMENTO A MANO & RAPIDO LISTINO */
+.manual-entry-card {
+  padding: 16px;
+}
+
+.catalog-chips-wrapper {
+  margin-bottom: 14px;
+}
+
+.catalog-chips-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.catalog-chip-btn {
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  color: var(--text-main);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--transition-fast);
+}
+
+.catalog-chip-btn:hover {
+  border-color: var(--color-primary);
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+.catalog-chip-price {
+  font-weight: 700;
+  color: var(--color-success);
+}
+
+.batch-paste-box {
+  background-color: var(--bg-surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-top: 10px;
+}
+
+.batch-paste-textarea {
+  width: 100%;
+  min-height: 85px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--input-border);
+  background-color: var(--input-bg);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.88rem;
+  resize: vertical;
+}
+
+.batch-paste-textarea:focus {
+  border-color: var(--border-focus);
+  outline: none;
 }
 
 /* COMBO INPUT FORNITORE OBBLIGATORIO */

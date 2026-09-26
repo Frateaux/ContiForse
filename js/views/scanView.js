@@ -2,11 +2,13 @@
  * ContiFor - Scan View (Moduli B & C)
  * 
  * Acquisizione Appunti Manoscritti, Scansione Rapida (Pesi & Calcoli),
+ * Inserimento a Mano Rapido, OCR Standalone Locale (Zero-Cloud) & Gemini AI,
  * Audit Matematico Automatico, Validazione Fornitore Obbligatoria & Generazione Fattura PDF A4.
  */
 
 import { store } from '../store/state.js';
 import { GeminiOCRClient } from '../gemini/geminiClient.js';
+import { LocalOCREngine } from '../ocr/localOcrEngine.js';
 import { Toast } from '../ui/toast.js';
 import { InvoiceGenerator } from '../ui/invoiceGenerator.js';
 import { PendingScansStorage } from '../storage/pendingScansStorage.js';
@@ -14,7 +16,8 @@ import { PendingScansStorage } from '../storage/pendingScansStorage.js';
 export class ScanView {
   constructor(container) {
     this.container = container;
-    this.scanMode = 'quick'; // 'quick' (Scansione Rapida Pesi & Calcoli) | 'standard' (Con Listino Fornitore)
+    this.scanMode = 'quick'; // 'quick' (Pesi & Calcoli) | 'standard' (Con Listino) | 'manual' (Inserimento a Mano)
+    this.ocrEngine = 'local'; // 'local' (Standalone Offline Zero-Cloud) | 'gemini' (Google AI Studio Cloud)
     this.currentImageBase64 = null;
     this.currentMimeType = 'image/jpeg';
     this.isProcessing = false;
@@ -46,7 +49,7 @@ export class ScanView {
       </div>
 
       <div class="scan-container">
-        <!-- Barra di selezione Modalità Scansione -->
+        <!-- Barra di selezione Modalità Scansione / Inserimento -->
         <div class="scan-mode-tabs">
           <button type="button" class="scan-mode-btn ${this.scanMode === 'quick' ? 'active' : ''}" data-mode="quick">
             <span class="mode-icon">⚡</span>
@@ -62,12 +65,19 @@ export class ScanView {
               <small class="d-block">Associazione prezzi da catalogo fornitore</small>
             </div>
           </button>
+          <button type="button" class="scan-mode-btn ${this.scanMode === 'manual' ? 'active' : ''}" data-mode="manual">
+            <span class="mode-icon">✍️</span>
+            <div>
+              <strong>Inserimento a Mano</strong>
+              <small class="d-block">Digitazione rapida pesi e catalogo fornitore</small>
+            </div>
+          </button>
         </div>
 
         <!-- Coda Foto in Sospeso (persistenti su disco se Gemini ha troppe richieste) -->
         <div id="pending-scans-container"></div>
 
-        <!-- Pannello Configurazione & Scatto -->
+        <!-- Pannello Configurazione Fornitore & Data -->
         <div class="card scan-setup-card mt-3">
           <div class="form-row">
             <!-- Selezione o Inserimento Fornitore Obbligatorio -->
@@ -98,38 +108,88 @@ export class ScanView {
             </div>
           </div>
 
-          <!-- Pulsanti Acquisizione Touch -->
-          <div class="camera-actions-row mt-3">
-            <label class="btn btn-primary btn-camera" for="camera-file-input">
-              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-                <circle cx="12" cy="13" r="4"></circle>
-              </svg>
-              <span>Fotocamera</span>
-              <input type="file" id="camera-file-input" accept="image/*" capture="environment" class="visually-hidden">
-            </label>
+          ${this.scanMode === 'manual' ? `
+            <!-- Pannello Inserimento a Mano Rapido -->
+            <div class="manual-entry-card mt-2">
+              <div class="d-flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h4 class="card-title font-weight-bold">✍️ Modalità Inserimento Diretto</h4>
+                  <p class="card-subtitle">Aggiungi articoli al volo dal listino oppure incolla blocchi di pesi e conti.</p>
+                </div>
+                <button type="button" id="btn-manual-add-empty" class="btn btn-outline btn-sm">
+                  ➕ Aggiungi Riga Vuota
+                </button>
+              </div>
 
-            <label class="btn btn-secondary btn-gallery" for="gallery-file-input">
-              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                <polyline points="21 15 16 10 5 21"></polyline>
-              </svg>
-              <span>Galleria / File</span>
-              <input type="file" id="gallery-file-input" accept="image/*" class="visually-hidden">
-            </label>
+              <!-- Chips Articoli Rapidi da Listino Fornitore -->
+              ${this.renderSupplierCatalogChips()}
 
-            <button type="button" id="btn-demo-sample" class="btn btn-outline" title="Carica un appunto di prova con pesi, somme e moltiplicazioni">
-              <span>Carica Esempio Calcoli Demo</span>
-            </button>
-          </div>
+              <!-- Parser Testuale Veloce per incollare blocchi di calcoli -->
+              <div class="batch-paste-box mt-3">
+                <label class="form-label font-weight-bold" for="manual-batch-textarea">
+                  📋 Incolla o scrivi righe di appunti / pesi (Parser Automatico)
+                </label>
+                <textarea id="manual-batch-textarea" class="batch-paste-textarea" 
+                  placeholder="Es:&#10;Pomodori 12.4 + 13.1 = 25.5 * 2.20&#10;Patate 50 * 0.95&#10;Zucchine 7.8 * 1.80&#10;Insalata 4 casse * 12.50&#10;Totale: 207.96"></textarea>
+                <div class="d-flex justify-between items-center mt-2 flex-wrap gap-2">
+                  <small class="text-subtle">Riconosce somme pesi (+), moltiplicazioni (* o x) e totali riga.</small>
+                  <button type="button" id="btn-parse-batch-text" class="btn btn-primary btn-sm">
+                    📥 Inserisci in Tabella
+                  </button>
+                </div>
+              </div>
+            </div>
+          ` : `
+            <!-- Selettore Motore OCR: Standalone Locale vs Gemini Cloud -->
+            <div class="ocr-engine-selector">
+              <span class="font-weight-bold">⚡ Motore OCR:</span>
+              <div class="ocr-engine-options">
+                <label class="ocr-engine-radio-label">
+                  <input type="radio" name="ocr-engine-choice" value="local" ${this.ocrEngine === 'local' ? 'checked' : ''}>
+                  <span>🖥️ <strong>OCR Locale Standalone</strong> <small class="text-success">(Nessun limite / Zero-Cloud)</small></span>
+                </label>
+                <label class="ocr-engine-radio-label">
+                  <input type="radio" name="ocr-engine-choice" value="gemini" ${this.ocrEngine === 'gemini' ? 'checked' : ''}>
+                  <span>☁️ <strong>Gemini AI Cloud</strong> <small class="text-subtle">(Richiede API Key)</small></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Pulsanti Acquisizione Touch -->
+            <div class="camera-actions-row mt-3">
+              <label class="btn btn-primary btn-camera" for="camera-file-input">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                  <circle cx="12" cy="13" r="4"></circle>
+                </svg>
+                <span>Fotocamera</span>
+                <input type="file" id="camera-file-input" accept="image/*" capture="environment" class="visually-hidden">
+              </label>
+
+              <label class="btn btn-secondary btn-gallery" for="gallery-file-input">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                  <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                  <polyline points="21 15 16 10 5 21"></polyline>
+                </svg>
+                <span>Galleria / File</span>
+                <input type="file" id="gallery-file-input" accept="image/*" class="visually-hidden">
+              </label>
+
+              <button type="button" id="btn-demo-sample" class="btn btn-outline" title="Carica un appunto di prova con pesi, somme e moltiplicazioni">
+                <span>Carica Esempio Calcoli Demo</span>
+              </button>
+            </div>
+          `}
         </div>
 
         <!-- Barra di Caricamento / Analisi AI -->
         <div id="ai-loading-state" class="card ai-processing-card ${this.isProcessing ? '' : 'hidden'}">
           <div class="spinner"></div>
           <div class="ai-processing-text">
-            <h4>Elaborazione Gemini Vision Flash in corso...</h4>
+            <h4 id="ai-processing-status-text">
+              ${this.ocrEngine === 'local' ? 'Elaborazione OCR Locale Standalone in corso...' : 'Elaborazione Gemini Vision Flash in corso...'}
+            </h4>
             <p>Trascrizione grafia, verifica delle moltiplicazioni (Q.tà × Prezzo) e quadratura delle addizioni dei pesi.</p>
           </div>
         </div>
@@ -144,31 +204,34 @@ export class ScanView {
                 Google AI Studio ha riscontrato un rallentamento o troppe richieste contemporanee (Rate Limit 429).
               </p>
               <div class="ai-error-hint mt-2">
-                💾 <strong>La foto è salvata automaticamente sul dispositivo:</strong> anche se chiudi l'app o fai altre operazioni, la ritroverai sempre in alto pronta da elaborare o da eliminare quando vuoi.
+                💾 <strong>La foto è salvata automaticamente sul dispositivo:</strong> puoi riprovare con l'OCR Locale Standalone (senza limiti), riprovare con Gemini o ritrovarla in seguito tra le foto in sospeso.
               </div>
             </div>
           </div>
           <div class="ai-error-actions mt-3 d-flex gap-2 flex-wrap">
-            <button type="button" class="btn btn-primary" id="btn-retry-scan">
-              🔄 Riprova Ora (Stessa Foto)
+            <button type="button" class="btn btn-primary" id="btn-fallback-local-ocr">
+              🖥️ Elabora Subito con OCR Locale Standalone (Nessun Limite)
             </button>
-            <button type="button" class="btn btn-outline" id="btn-keep-pending">
+            <button type="button" class="btn btn-outline" id="btn-retry-scan">
+              🔄 Riprova con Gemini AI
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-keep-pending">
               💾 Conserva tra le Foto in Sospeso
             </button>
             <button type="button" class="btn btn-danger btn-sm" id="btn-delete-active-pending">
               🗑️ Elimina Questa Foto
             </button>
-            <button type="button" class="btn btn-subtle" id="btn-dismiss-error">
+            <button type="button" class="btn btn-subtle btn-sm" id="btn-dismiss-error">
               Nascondi avviso
             </button>
           </div>
         </div>
 
         <!-- Sezione Revisione Human-in-the-Loop & Audit Matematico -->
-        <div id="human-in-the-loop-section" class="${this.currentImageBase64 || this.extractedItems.length > 0 ? '' : 'hidden'}">
+        <div id="human-in-the-loop-section" class="${this.scanMode === 'manual' || this.currentImageBase64 || this.extractedItems.length > 0 ? '' : 'hidden'}">
           
-          <!-- Box Anteprima Immagine Zoomabile -->
-          <div class="card image-preview-card mt-3">
+          <!-- Box Anteprima Immagine Zoomabile (visibile solo se c'è un'immagine acquisita) -->
+          <div class="card image-preview-card mt-3 ${this.currentImageBase64 ? '' : 'hidden'}">
             <div class="preview-header">
               <div class="preview-title">
                 <span class="badge badge-info">Appunto Acquisito</span>
@@ -195,7 +258,7 @@ export class ScanView {
             <div class="review-table-header">
               <div>
                 <h3 class="card-title">Verifica Voci & Controllo Pesi (Human-in-the-Loop)</h3>
-                <p class="card-subtitle">Modifica qualsiasi valore se necessario. I subtotali si ricalcolano in tempo reale.</p>
+                <p class="card-subtitle">Modifica qualsiasi valore. Inserisci pesi sommati es: "12.4 + 13.1". I subtotali si calcolano in tempo reale.</p>
               </div>
               <button type="button" id="btn-add-item-row" class="btn btn-sm btn-outline">
                 ➕ Aggiungi Riga
@@ -270,22 +333,57 @@ export class ScanView {
     `;
 
     this.bindEvents();
-    this.renderTableRows();
-    this.updateMathAuditUI();
+    if (this.scanMode === 'manual' && this.extractedItems.length === 0) {
+      this.addNewRow();
+    } else {
+      this.renderTableRows();
+      this.updateMathAuditUI();
+    }
+  }
+
+  renderSupplierCatalogChips() {
+    const supplier = store.getSupplierById(this.selectedSupplierId);
+    const catalog = supplier?.priceList || [];
+    if (catalog.length === 0) {
+      return `
+        <div class="catalog-chips-wrapper mt-3">
+          <small class="text-subtle">
+            Nessun articolo censito a listino per questo fornitore. Puoi aggiungere righe a mano con il pulsante sopra o censire i prodotti nella sezione Fornitori.
+          </small>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="catalog-chips-wrapper mt-3">
+        <label class="form-label font-weight-bold">Tocca un articolo a listino per aggiungerlo subito:</label>
+        <div class="catalog-chips-list">
+          ${catalog.map(c => `
+            <button type="button" class="catalog-chip-btn" data-name="${c.name}" data-price="${c.unitPrice}" data-unit="${c.unit || 'kg'}">
+              <span>➕ ${c.name}</span>
+              <span class="catalog-chip-price">€ ${Number(c.unitPrice).toFixed(2)}/${c.unit || 'kg'}</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    `;
   }
 
   bindEvents() {
-    // Cambio modalità di scansione (Rapida vs Standard)
+    // Cambio modalità di scansione (Rapida vs Standard vs Inserimento a Mano)
     const modeBtns = this.container.querySelectorAll('.scan-mode-btn');
     modeBtns.forEach(btn => {
       btn.addEventListener('click', () => {
         this.scanMode = btn.dataset.mode;
-        modeBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        if (this.scanMode === 'standard') {
-          this.updatePricesFromSupplierListino();
-        }
-        this.updateMathAuditUI();
+        this.render();
+      });
+    });
+
+    // Selettore Motore OCR
+    const ocrRadios = this.container.querySelectorAll('input[name="ocr-engine-choice"]');
+    ocrRadios.forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        this.ocrEngine = e.target.value;
       });
     });
 
@@ -297,6 +395,8 @@ export class ScanView {
         if (group) group.classList.remove('supplier-required-error');
         if (this.scanMode === 'standard') {
           this.updatePricesFromSupplierListino();
+        } else if (this.scanMode === 'manual') {
+          this.render();
         }
       });
     }
@@ -337,6 +437,69 @@ export class ScanView {
       addRowBtn.addEventListener('click', () => this.addNewRow());
     }
 
+    // Modalità Manuale: aggiungi riga vuota
+    const manualAddEmptyBtn = this.container.querySelector('#btn-manual-add-empty');
+    if (manualAddEmptyBtn) {
+      manualAddEmptyBtn.addEventListener('click', () => {
+        this.addNewRow();
+        this.showReviewSection();
+      });
+    }
+
+    // Modalità Manuale: Chip Articoli da listino
+    const chipBtns = this.container.querySelectorAll('.catalog-chip-btn');
+    chipBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.name;
+        const price = parseFloat(btn.dataset.price) || 0;
+        const unit = btn.dataset.unit || 'kg';
+        this.extractedItems.push({
+          productName: name,
+          quantity: 1,
+          sub_weights: [],
+          unit: unit,
+          unitPrice: price,
+          subtotal: price,
+          declared_row_total: null,
+          calculation_expression: '',
+          notes: ''
+        });
+        this.showReviewSection();
+        this.renderTableRows();
+        this.updateMathAuditUI();
+        Toast.info(`Aggiunto ${name} a listino (€ ${price.toFixed(2)})`);
+      });
+    });
+
+    // Modalità Manuale: Parser blocchi di testo
+    const parseBatchBtn = this.container.querySelector('#btn-parse-batch-text');
+    if (parseBatchBtn) {
+      parseBatchBtn.addEventListener('click', () => {
+        const textarea = this.container.querySelector('#manual-batch-textarea');
+        const text = textarea?.value?.trim();
+        if (!text) {
+          Toast.warning('Scrivi o incolla prima delle righe di calcoli o pesi.');
+          return;
+        }
+
+        const supplier = store.getSupplierById(this.selectedSupplierId);
+        const catalogNames = (supplier?.priceList || []).map(p => p.name);
+        const ocrResult = LocalOCREngine.parseOcrText(text, catalogNames);
+
+        if (ocrResult.items && ocrResult.items.length > 0) {
+          // Se avevamo solo una riga vuota iniziale, sostituiscila
+          if (this.extractedItems.length === 1 && this.extractedItems[0].productName === 'Nuovo Articolo' && this.extractedItems[0].unitPrice === 0) {
+            this.extractedItems = [];
+          }
+          this.processOCRResult(ocrResult);
+          textarea.value = '';
+          Toast.success(`Riconosciute ed aggiunte ${ocrResult.items.length} voci con successo!`);
+        } else {
+          Toast.warning('Nessuna riga di calcolo o peso riconosciuta. Prova ad inserire es: "Pomodori 12.4 + 13.1 = 25.5 * 2.20"');
+        }
+      });
+    }
+
     const confirmBtn = this.container.querySelector('#btn-confirm-supply');
     if (confirmBtn) {
       confirmBtn.addEventListener('click', () => this.confirmAndSaveSupply());
@@ -355,6 +518,17 @@ export class ScanView {
       });
     }
 
+    // Fallback OCR Standalone Locale su errore Gemini
+    const fallbackLocalOcrBtn = this.container.querySelector('#btn-fallback-local-ocr');
+    if (fallbackLocalOcrBtn) {
+      fallbackLocalOcrBtn.addEventListener('click', async () => {
+        this.ocrEngine = 'local';
+        const radio = this.container.querySelector('input[name="ocr-engine-choice"][value="local"]');
+        if (radio) radio.checked = true;
+        await this.executeOcrAnalysis();
+      });
+    }
+
     const retryBtn = this.container.querySelector('#btn-retry-scan');
     if (retryBtn) {
       retryBtn.addEventListener('click', () => {
@@ -369,7 +543,7 @@ export class ScanView {
         this.currentImageBase64 = null;
         this.extractedItems = [];
         const section = this.container.querySelector('#human-in-the-loop-section');
-        if (section) section.classList.add('hidden');
+        if (section && this.scanMode !== 'manual') section.classList.add('hidden');
         this.loadAndRenderPendingScans();
         Toast.info('Foto conservata negli scatti in sospeso. Puoi continuare o chiudere l\'app.');
       });
@@ -449,11 +623,14 @@ export class ScanView {
                   ${item.errorMessage ? `<small class="text-danger d-block mt-1 font-weight-bold">⚠️ ${item.errorMessage}</small>` : ''}
                 </div>
                 <div class="pending-scan-actions">
-                  <button type="button" class="btn btn-primary btn-sm btn-process-pending" data-id="${item.id}">
-                    ⚡ Elabora con Gemini Ora
+                  <button type="button" class="btn btn-primary btn-sm btn-process-pending-local" data-id="${item.id}" title="Elabora senza connessione né limiti">
+                    🖥️ Elabora Locale
                   </button>
-                  <button type="button" class="btn btn-outline btn-sm btn-delete-pending" data-id="${item.id}">
-                    🗑️ Elimina Foto
+                  <button type="button" class="btn btn-outline btn-sm btn-process-pending-gemini" data-id="${item.id}" title="Elabora con Google Gemini AI Studio">
+                    ☁️ Elabora Gemini
+                  </button>
+                  <button type="button" class="btn btn-danger btn-sm btn-delete-pending" data-id="${item.id}">
+                    🗑️ Elimina
                   </button>
                 </div>
               </div>
@@ -463,35 +640,46 @@ export class ScanView {
       </div>
     `;
 
-    // Handler per elaborazione scatto in sospeso
-    container.querySelectorAll('.btn-process-pending').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        const id = e.currentTarget.dataset.id;
-        const item = this.pendingScans.find(s => s.id === id);
-        if (!item) return;
+    // Helper per avviare elaborazione scatto in sospeso
+    const launchPendingScan = async (id, chosenEngine) => {
+      const item = this.pendingScans.find(s => s.id === id);
+      if (!item) return;
 
-        this.activePendingScanId = item.id;
-        this.currentImageBase64 = item.imageBase64;
-        this.currentMimeType = item.mimeType;
-        this.selectedSupplierId = item.supplierId || this.selectedSupplierId;
-        this.customSupplierName = item.customSupplierName || '';
-        this.scanMode = item.scanMode || 'quick';
-        this.documentDate = item.documentDate || this.documentDate;
+      this.activePendingScanId = item.id;
+      this.currentImageBase64 = item.imageBase64;
+      this.currentMimeType = item.mimeType;
+      this.selectedSupplierId = item.supplierId || this.selectedSupplierId;
+      this.customSupplierName = item.customSupplierName || '';
+      this.scanMode = item.scanMode || 'quick';
+      this.documentDate = item.documentDate || this.documentDate;
+      this.ocrEngine = chosenEngine;
 
-        const supSelect = this.container.querySelector('#scan-supplier-select');
-        if (supSelect) supSelect.value = this.selectedSupplierId || '';
-        const customInput = this.container.querySelector('#scan-custom-supplier-input');
-        if (customInput) customInput.value = this.customSupplierName;
-        const dateInput = this.container.querySelector('#scan-date-input');
-        if (dateInput) dateInput.value = this.documentDate;
+      const supSelect = this.container.querySelector('#scan-supplier-select');
+      if (supSelect) supSelect.value = this.selectedSupplierId || '';
+      const customInput = this.container.querySelector('#scan-custom-supplier-input');
+      if (customInput) customInput.value = this.customSupplierName;
+      const dateInput = this.container.querySelector('#scan-date-input');
+      if (dateInput) dateInput.value = this.documentDate;
 
-        const imgEl = this.container.querySelector('#scanned-image-preview');
-        if (imgEl) imgEl.src = `data:${item.mimeType};base64,${item.imageBase64}`;
-        this.showImagePreviewSection();
+      const radio = this.container.querySelector(`input[name="ocr-engine-choice"][value="${chosenEngine}"]`);
+      if (radio) radio.checked = true;
 
-        Toast.info('Caricamento foto in sospeso ed elaborazione con Gemini in corso...');
-        await this.executeOcrAnalysis();
-      });
+      const imgEl = this.container.querySelector('#scanned-image-preview');
+      if (imgEl) imgEl.src = `data:${item.mimeType};base64,${item.imageBase64}`;
+      this.showImagePreviewSection();
+
+      Toast.info(`Elaborazione foto in sospeso con ${chosenEngine === 'local' ? 'OCR Standalone Locale' : 'Gemini AI'}...`);
+      await this.executeOcrAnalysis();
+    };
+
+    // Handler elaborazione locale
+    container.querySelectorAll('.btn-process-pending-local').forEach(btn => {
+      btn.addEventListener('click', (e) => launchPendingScan(e.currentTarget.dataset.id, 'local'));
+    });
+
+    // Handler elaborazione gemini
+    container.querySelectorAll('.btn-process-pending-gemini').forEach(btn => {
+      btn.addEventListener('click', (e) => launchPendingScan(e.currentTarget.dataset.id, 'gemini'));
     });
 
     // Handler per cancellazione scatto in sospeso
@@ -545,7 +733,7 @@ export class ScanView {
     } catch (err) {
       console.error('Errore durante il caricamento o compressione:', err);
       this.updateProcessingUI(false);
-      this.showErrorCard(err.message);
+      this.showErrorCard(err.message, 'local');
       Toast.error(`Errore caricamento: ${err.message}`);
     }
   }
@@ -562,14 +750,48 @@ export class ScanView {
     this.hideErrorCard();
     this.updateProcessingUI(true);
 
+    const supplier = store.getSupplierById(this.selectedSupplierId);
+    const catalogNames = (supplier?.priceList || []).map(p => p.name);
+
+    // MOTORE 1: OCR Locale Standalone (Zero-Cloud, nessun limite di quota)
+    if (this.ocrEngine === 'local') {
+      try {
+        const rawText = await LocalOCREngine.recognizeImage(
+          this.currentImageBase64,
+          (progress) => {
+            const statusEl = this.container.querySelector('#ai-processing-status-text');
+            if (statusEl && progress.message) {
+              statusEl.textContent = progress.message;
+            }
+          }
+        );
+
+        const ocrResult = LocalOCREngine.parseOcrText(rawText, catalogNames);
+        this.processOCRResult(ocrResult);
+
+        // Se era un elemento in sospeso salvato in precedenza, rimuovilo
+        if (this.activePendingScanId) {
+          await PendingScansStorage.delete(this.activePendingScanId);
+          this.activePendingScanId = null;
+          await this.loadAndRenderPendingScans();
+        }
+
+        Toast.success('Riconoscimento OCR Locale e controllo calcoli completati!');
+      } catch (err) {
+        console.error('Errore durante OCR Locale:', err);
+        this.showErrorCard(err.message, 'local');
+        Toast.error(`Errore OCR Locale: ${err.message}`);
+      } finally {
+        this.updateProcessingUI(false);
+      }
+      return;
+    }
+
+    // MOTORE 2: Gemini AI Cloud
     try {
       const settings = store.getSettings();
       const apiKey = settings?.geminiApiKey;
       const targetModel = 'gemini-3.8-flash';
-
-      // Catalogo suggerito per il fornitore selezionato
-      const supplier = store.getSupplierById(this.selectedSupplierId);
-      const catalogNames = (supplier?.priceList || []).map(p => p.name);
 
       const ocrResult = await GeminiOCRClient.analyzeHandwrittenNote({
         imageBase64: this.currentImageBase64,
@@ -588,11 +810,11 @@ export class ScanView {
         await this.loadAndRenderPendingScans();
       }
 
-      Toast.success('Analisi OCR e controllo aritmetico completati con successo!');
+      Toast.success('Analisi Gemini AI e controllo aritmetico completati!');
     } catch (err) {
-      console.error('Errore durante la scansione:', err);
+      console.error('Errore durante la scansione Gemini:', err);
 
-      // Persistenza automatica della foto su storage (IndexedDB/localStorage)
+      // Persistenza automatica della foto su storage
       try {
         const saved = await PendingScansStorage.save({
           id: this.activePendingScanId || undefined,
@@ -610,8 +832,8 @@ export class ScanView {
         console.warn('Errore salvataggio automatico foto in sospeso:', saveErr);
       }
 
-      this.showErrorCard(err.message);
-      Toast.error(`Errore analisi: ${err.message}`);
+      this.showErrorCard(err.message, 'gemini');
+      Toast.error(`Errore Gemini: ${err.message}`);
     } finally {
       this.updateProcessingUI(false);
     }
@@ -620,6 +842,8 @@ export class ScanView {
   showImagePreviewSection() {
     const section = this.container.querySelector('#human-in-the-loop-section');
     if (section) section.classList.remove('hidden');
+    const previewCard = this.container.querySelector('.image-preview-card');
+    if (previewCard && this.currentImageBase64) previewCard.classList.remove('hidden');
     const wrapper = this.container.querySelector('#image-preview-wrapper');
     if (wrapper) wrapper.classList.remove('collapsed');
   }
@@ -933,7 +1157,7 @@ export class ScanView {
           </div>
         </td>
         <td>
-          <input type="number" step="0.01" min="0" class="table-input item-qty font-mono" value="${item.quantity}" data-idx="${index}">
+          <input type="text" class="table-input item-qty font-mono" value="${hasSubweights ? item.sub_weights.join(' + ') : item.quantity}" placeholder="Es: 12.4 + 13.1 o 25.5" title="Inserisci peso o calcolo (es: 12.4 + 13.1)" data-idx="${index}">
         </td>
         <td>
           <select class="table-select item-unit" data-idx="${index}">
@@ -974,16 +1198,63 @@ export class ScanView {
       });
     });
 
-    // Input Quantità con ricalcolo immediato
+    // Input Quantità con supporto espressioni matematiche (es: 12.4 + 13.1 = 25.5)
     tbody.querySelectorAll('.item-qty').forEach(inp => {
-      inp.addEventListener('input', (e) => {
+      const evaluateQty = (e) => {
         const idx = parseInt(e.target.dataset.idx, 10);
-        const qty = parseFloat(e.target.value) || 0;
-        this.extractedItems[idx].quantity = qty;
-        this.extractedItems[idx].subtotal = Math.round(qty * this.extractedItems[idx].unitPrice * 100) / 100;
+        const item = this.extractedItems[idx];
+        if (!item) return;
+
+        let raw = (e.target.value || '').trim().replace(/,/g, '.');
+        let finalQty = 0;
+        let subWeights = [];
+
+        if (raw.includes('+')) {
+          const parts = raw.split('+').map(p => parseFloat(p.trim())).filter(n => !isNaN(n));
+          if (parts.length > 0) {
+            subWeights = parts;
+            finalQty = Math.round(parts.reduce((a, b) => a + b, 0) * 100) / 100;
+            e.target.value = finalQty;
+          }
+        } else {
+          finalQty = parseFloat(raw) || 0;
+        }
+
+        item.quantity = finalQty;
+        if (subWeights.length > 1) {
+          item.sub_weights = subWeights;
+        } else if (!raw.includes('+')) {
+          item.sub_weights = [];
+        }
+
+        item.subtotal = Math.round(finalQty * (item.unitPrice || 0) * 100) / 100;
         this.updateRowSubtotalDisplay(idx);
         this.updateTotalsBar();
         this.updateMathAuditUI();
+      };
+
+      inp.addEventListener('change', evaluateQty);
+      inp.addEventListener('blur', evaluateQty);
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          evaluateQty(e);
+          e.target.blur();
+        }
+      });
+      inp.addEventListener('input', (e) => {
+        const raw = e.target.value;
+        if (!raw.includes('+')) {
+          const idx = parseInt(e.target.dataset.idx, 10);
+          const item = this.extractedItems[idx];
+          if (!item) return;
+          const qty = parseFloat(raw.replace(/,/g, '.')) || 0;
+          item.quantity = qty;
+          item.sub_weights = [];
+          item.subtotal = Math.round(qty * (item.unitPrice || 0) * 100) / 100;
+          this.updateRowSubtotalDisplay(idx);
+          this.updateTotalsBar();
+          this.updateMathAuditUI();
+        }
       });
     });
 

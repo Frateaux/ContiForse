@@ -237,6 +237,61 @@ async function testPendingScansStorage() {
   console.log('✓ Rimozione foto completata/cancellata verificata con successo.');
 }
 
+import { LocalOCREngine } from '../js/ocr/localOcrEngine.js';
+
+function testLocalOcrParser() {
+  console.log('\n--- TEST 6: Motore OCR Standalone Locale (Parser & Quadratura Euristica) ---');
+  
+  const sampleNote = `
+    Bolla Ortofrutta del 21/09
+    Pomodori San Marzano 12.4 + 13.1 = 25.5 kg * 2.20 € = 56.10 €
+    Patate Gialle 50 kg * 0.95 € = 47.50 €
+    Zucchine Scure 7.8 * 1.80 = 14.04
+    Insalata Iceberg 4 casse * 12.50 = 50.00
+    Totale Generale: 167.64
+  `;
+
+  const catalog = ['Pomodori San Marzano', 'Patate Gialle Bologna', 'Zucchine Scure', 'Insalata Iceberg'];
+  const parsed = LocalOCREngine.parseOcrText(sampleNote, catalog);
+
+  if (!parsed.items || parsed.items.length !== 4) {
+    throw new Error(`Attese 4 voci estratte, trovate ${parsed.items?.length}`);
+  }
+
+  // Verifica Riga 1: Addizione pesi + moltiplicazione
+  const riga1 = parsed.items[0];
+  if (riga1.product_name !== 'Pomodori San Marzano') {
+    throw new Error(`Nome prodotto non corrispondente: atteso 'Pomodori San Marzano', trovato '${riga1.product_name}'`);
+  }
+  if (riga1.quantity !== 25.5 || !Array.isArray(riga1.sub_weights) || riga1.sub_weights.length !== 2) {
+    throw new Error(`Pesi sommati non rilevati: atteso [12.4, 13.1] -> 25.5, trovato ${JSON.stringify(riga1.sub_weights)}`);
+  }
+  if (riga1.unit_price !== 2.20) {
+    throw new Error(`Prezzo unitario non rilevato: atteso 2.20, trovato ${riga1.unit_price}`);
+  }
+
+  // Verifica Riga 2: Moltiplicazione con catalogo fuzzy
+  const riga2 = parsed.items[1];
+  if (riga2.product_name !== 'Patate Gialle Bologna') {
+    throw new Error(`Risoluzione catalogo fuzzy fallita: atteso 'Patate Gialle Bologna', trovato '${riga2.product_name}'`);
+  }
+  if (riga2.quantity !== 50 || riga2.unit_price !== 0.95) {
+    throw new Error(`Quantità o prezzo riga 2 errati`);
+  }
+
+  // Verifica Totale complessivo dichiarato
+  if (parsed.declared_grand_total !== 167.64) {
+    throw new Error(`Totale dichiarato non rilevato: atteso 167.64, trovato ${parsed.declared_grand_total}`);
+  }
+
+  // Verifica audit counts
+  if (parsed.math_audit.detected_additions_count < 1 || parsed.math_audit.detected_multiplications_count < 4) {
+    throw new Error(`Conteggio audit aritmetico errato: addizioni ${parsed.math_audit.detected_additions_count}, moltiplicazioni ${parsed.math_audit.detected_multiplications_count}`);
+  }
+
+  console.log('✓ Parser euristico locale verificato: addizioni pesi, moltiplicazioni e quadratura totali perfetti!');
+}
+
 async function runAll() {
   try {
     await testCrypto();
@@ -244,6 +299,7 @@ async function runAll() {
     testInvoiceAndMathAudit();
     await testBiometricsAndSync();
     await testPendingScansStorage();
+    testLocalOcrParser();
     console.log('\n=============================================');
     console.log('TUTTI I TEST AUTOMATIZZATI HANNO AVUTO ESITO POSITIVO!');
     console.log('=============================================');
@@ -254,3 +310,4 @@ async function runAll() {
 }
 
 runAll();
+
